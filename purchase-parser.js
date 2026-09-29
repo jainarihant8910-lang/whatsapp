@@ -44,7 +44,7 @@ function parseBill(text){
   const transport=find(/^Transport\s+(.+)/i);
   const transportId=find(/Transport\s*ID\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
   const pos=find(/Place\s*of\s*Supply\s*[:\-]?\s*(.+?)(?=\s+Invoice\s*No|$)/i);
-  const invoiceTotal=amountAfter(/Total Amount After Tax/i);
+  const invoiceTotal=amountAfter(/(?:Total Amount After Tax|Total Amount)\b/i);
   const taxableTotal=amountAfter(/^Taxable Amount\b/i);
   const taxTotal=amountAfter(/^Total Tax\b/i);
   const igst=amountAfter(/^Add\s*:\s*IGST\b/i);
@@ -107,8 +107,8 @@ function parseBill(text){
     if(!m)continue;
     let name=String(m[2]||'').trim();
     // Tesseract can leave a tiny artifact immediately before a real capitalized product name.
-    name=name.replace(/^(?:[a-z]{1,3}\\s+)+(?=[A-Z])/,'').trim();
-    const hsn=(m[3]&&/^\\d+$/.test(m[3]))?m[3]:'';
+    name=name.replace(/^(?:[a-z]{1,3}\s+)+(?=[A-Z])/,'').trim();
+    const hsn=(m[3]&&/^\d+$/.test(m[3]))?m[3]:'';
     const qty=num(m[4]), unit=m[5], mrp=num(m[6]), rate=num(m[7]), taxAmount=num(m[8]), gstFromText=m[9]?num(m[9]):0, total=num(m[10]);
     const taxable=money(qty*rate);
     const gst=gstFromText||((taxable>0&&taxAmount>0)?money(taxAmount/taxable*100):0);
