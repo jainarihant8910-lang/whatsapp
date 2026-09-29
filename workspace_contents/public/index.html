@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Delivery & Stock Manager</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+<div class="app">
+
+    <!-- ================= SIDEBAR ================= -->
+
+    <aside class="sidebar" id="sidebar">
+
+        <div class="brand">
+            <div class="brand-icon">📦</div>
+
+            <div>
+                <h1>Delivery Manager</h1>
+                <span>WhatsApp + Stock</span>
+            </div>
+        </div>
+
+        <nav class="navigation">
+
+            <button
+                class="nav-item active"
+                data-section="dashboard"
+            >
+                <span>📊</span>
+                Dashboard
+            </button>
+
+            <button
+                class="nav-item"
+                data-section="deliveries"
+            >
+                <span>🚚</span>
+                Deliveries
+            </button>
+
+            <button
+                class="nav-item"
+                data-section="stock"
+            >
+                <span>📦</span>
+                Stock
+            </button>
+
+            <button
+                class="nav-item"
+                data-section="transactions"
+            >
+                <span>📋</span>
+                Stock History
+            </button>
+
+            <button
+                class="nav-item"
+                data-section="senders"
+            >
+                <span>👥</span>
+                WhatsApp Senders
+            </button>
+
+        </nav>
+
+        <div class="sidebar-bottom">
+
+            <div class="connection-mini">
+                <span
+                    id="sidebarWhatsappDot"
+                    class="status-dot connecting"
+                ></span>
+
+                <div>
+                    <strong id="sidebarWhatsappText">
+                        Connecting
+                    </strong>
+
+                    <small>
+                        WhatsApp
+                    </small>
+                </div>
+            </div>
+
+        </div>
+
+    </aside>
+
+
+    <!-- ================= MAIN ================= -->
+
+    <main class="main">
+
+        <!-- TOPBAR -->
+
+        <header class="topbar">
+
+            <button
+                id="mobileMenuButton"
+                class="mobile-menu-button"
+                aria-label="Open menu"
+            >
+                ☰
+            </button>
+
+            <div>
+                <h2 id="pageTitle">
+                    Dashboard
+                </h2>
+
+                <p id="pageSubtitle">
+                    Overview of your deliveries and stock
+                </p>
+            </div>
+
+            <button
+                id="refreshButton"
+                class="refresh-button"
+                title="Refresh"
+            >
+                ↻
+            </button>
+
+        </header>
+
+
+        <!-- ================= DASHBOARD ================= -->
+
+        <section
+            id="dashboardSection"
+            class="page-section active"
+        >
+
+            <!-- WhatsApp -->
+
+            <div class="whatsapp-card">
+
+                <div class="whatsapp-card-header">
+
+                    <div>
+
+                        <div class="section-label">
+                            WHATSAPP
+                        </div>
+
+                        <h2>
+                            WhatsApp Connection
+                        </h2>
+
+                        <p id="whatsappStatusText">
+                            Checking connection...
+                        </p>
+
+                    </div>
+
+                    <div
+                        id="whatsappStatusBadge"
+                        class="status-badge connecting"
+                    >
+                        Connecting
+                    </div>
+
+                </div>
+
+
+                <!-- QR -->
+
+                <div
+                    id="whatsappQrContainer"
+                    class="qr-container hidden"
+                >
+
+                    <div class="qr-content">
+
+                        <div>
+                            <h3>
+                                Scan QR Code
+                            </h3>
+
+                            <p>
+                                Open WhatsApp on your phone →
+                                Linked Devices →
+                                Link a Device.
+                            </p>
+
+                            <p class="qr-note">
+                                The QR code below is only shown
+                                when WhatsApp requires linking.
+                            </p>
+                        </div>
+
+                        <div class="qr-box">
+                            <img
+                                id="whatsappQrImage"
+                                alt="WhatsApp QR Code"
+                            >
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- Disconnected -->
+
+                <div
+                    id="whatsappDisconnected"
+                    class="disconnect-box hidden"
+                >
+
+                    <strong>
+                        WhatsApp is disconnected.
+                    </strong>
+
+                    <small
+                        id="whatsappDisconnectReason"
+                    ></small>
+
+                </div>
+
+            </div>
+
+
+            <!-- STATS -->
+
+            <div class="stats-grid">
+
+                <div class="stat-card">
+
+                    <div class="stat-icon blue">
+                        🚚
+                    </div>
+
+                    <div>
+                        <span>
+                            Total Deliveries
+                        </span>
+
+                        <strong id="totalDeliveries">
+                            0
+                        </strong>
+                    </div>
+
+                </div>
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon green">
+                        📦
+                    </div>
+
+                    <div>
+                        <span>
+                            Stock Items
+                        </span>
+
+                        <strong id="totalItems">
+                            0
+                        </strong>
+                    </div>
+
+                </div>
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon orange">
+                        ⚠️
+                    </div>
+
+                    <div>
+                        <span>
+                            Low Stock
+                        </span>
+
+                        <strong id="lowStockItems">
+                            0
+                        </strong>
+                    </div>
+
+                </div>
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon purple">
+                        👥
+                    </div>
+
+                    <div>
+                        <span>
+                            Allowed Senders
+                        </span>
+
+                        <strong id="totalSenders">
+                            0
+                        </strong>
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- DASHBOARD GRID -->
+
+            <div class="dashboard-grid">
+
+                <div class="panel">
+
+                    <div class="panel-header">
+
+                        <div>
+                            <h3>
+                                Recent Deliveries
+                            </h3>
+
+                            <p>
+                                Latest recorded deliveries
+                            </p>
+                        </div>
+
+                        <button
+                            class="text-button"
+                            data-section-target="deliveries"
+                        >
+                            View all
+                        </button>
+
+                    </div>
+
+                    <div
+                        id="recentDeliveries"
+                        class="table-container"
+                    >
+                        <div class="loading">
+                            Loading...
+                        </div>
+                    </div>
+
+                </div>
+
+
+                <div class="panel">
+
+                    <div class="panel-header">
+
+                        <div>
+                            <h3>
+                                Low Stock
+                            </h3>
+
+                            <p>
+                                Items requiring attention
+                            </p>
+                        </div>
+
+                        <button
+                            class="text-button"
+                            data-section-target="stock"
+                        >
+                            View stock
+                        </button>
+
+                    </div>
+
+                    <div
+                        id="lowStockList"
+                        class="low-stock-list"
+                    >
+                        <div class="loading">
+                            Loading...
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- ================= DELIVERIES ================= -->
+
+        <section
+            id="deliveriesSection"
+            class="page-section"
+        >
+
+            <div class="section-heading">
+
+                <div>
+                    <div class="section-label">
+                        RECORDS
+                    </div>
+
+                    <h2>
+                        Delivery Records
+                    </h2>
+
+                    <p>
+                        All deliveries recorded from WhatsApp
+                        or manually.
+                    </p>
+                </div>
+
+                <button
+                    id="addDeliveryButton"
+                    class="primary-button"
+                >
+                    + Add Delivery
+                </button>
+
+            </div>
+
+
+            <div class="toolbar">
+
+                <input
+                    id="deliverySearch"
+                    type="search"
+                    placeholder="Search deliveries..."
+                >
+
+                <input
+                    id="deliveryDateFilter"
+                    type="date"
+                >
+
+            </div>
+
+
+            <div class="panel">
+
+                <div
+                    id="deliveriesTable"
+                    class="table-container"
+                >
+                    <div class="loading">
+                        Loading deliveries...
+                    </div>
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- ================= STOCK ================= -->
+
+        <section
+            id="stockSection"
+            class="page-section"
+        >
+
+            <div class="section-heading">
+
+                <div>
+                    <div class="section-label">
+                        INVENTORY
+                    </div>
+
+                    <h2>
+                        Stock Management
+                    </h2>
+
+                    <p>
+                        Manage available stock and minimum
+                        stock levels.
+                    </p>
+                </div>
+
+                <button
+                    id="addItemButton"
+                    class="primary-button"
+                >
+                    + Add Item
+                </button>
+
+            </div>
+
+
+            <div class="panel">
+
+                <div
+                    id="stockTable"
+                    class="table-container"
+                >
+                    <div class="loading">
+                        Loading stock...
+                    </div>
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- ================= TRANSACTIONS ================= -->
+
+        <section
+            id="transactionsSection"
+            class="page-section"
+        >
+
+            <div class="section-heading">
+
+                <div>
+                    <div class="section-label">
+                        HISTORY
+                    </div>
+
+                    <h2>
+                        Stock Transaction History
+                    </h2>
+
+                    <p>
+                        Incoming and outgoing stock movements.
+                    </p>
+                </div>
+
+            </div>
+
+
+            <div class="toolbar">
+
+                <input
+                    id="transactionSearch"
+                    type="search"
+                    placeholder="Search transactions..."
+                >
+
+            </div>
+
+
+            <div class="panel">
+
+                <div
+                    id="transactionsTable"
+                    class="table-container"
+                >
+                    <div class="loading">
+                        Loading history...
+                    </div>
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- ================= SENDERS ================= -->
+
+        <section
+            id="sendersSection"
+            class="page-section"
+        >
+
+            <div class="section-heading">
+
+                <div>
+                    <div class="section-label">
+                        WHATSAPP ACCESS
+                    </div>
+
+                    <h2>
+                        Authorized WhatsApp Senders
+                    </h2>
+
+                    <p>
+                        Only phone numbers added here can
+                        create delivery records.
+                    </p>
+                </div>
+
+                <button
+                    id="addSenderButton"
+                    class="primary-button"
+                >
+                    + Add Sender
+                </button>
+
+            </div>
+
+
+            <div class="info-banner">
+
+                <span>🔐</span>
+
+                <div>
+                    <strong>
+                        Private sender allowlist
+                    </strong>
+
+                    <p>
+                        Groups and unauthorized numbers are
+                        ignored. Add the sender's real
+                        international phone number.
+                    </p>
+                </div>
+
+            </div>
+
+
+            <div class="panel">
+
+                <div
+                    id="sendersTable"
+                    class="table-container"
+                >
+                    <div class="loading">
+                        Loading senders...
+                    </div>
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+</div>
+
+
+<!-- ================= MODAL ================= -->
+
+<div
+    id="modalOverlay"
+    class="modal-overlay hidden"
+>
+
+    <div
+        id="modal"
+        class="modal"
+    >
+
+        <div class="modal-header">
+
+            <div>
+                <h2 id="modalTitle">
+                    Add Item
+                </h2>
+
+                <p id="modalSubtitle"></p>
+            </div>
+
+            <button
+                id="modalClose"
+                class="modal-close"
+            >
+                ×
+            </button>
+
+        </div>
+
+        <div id="modalBody"></div>
+
+    </div>
+
+</div>
+
+
+<!-- TOAST -->
+
+<div
+    id="toastContainer"
+    class="toast-container"
+></div>
+
+
+<script src="app.js"></script>
+
+</body>
+</html>
