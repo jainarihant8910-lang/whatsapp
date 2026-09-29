@@ -15,6 +15,7 @@ const retries = new Map();
 const generations = new Map();
 const manualStops = new WeakSet();
 const restartTimers = new Map();
+const startupPromises = new Map();
 
 const CHROME_ARGS = [
   '--no-sandbox',
@@ -25,7 +26,13 @@ const CHROME_ARGS = [
   '--no-zygote',
   '--disable-extensions',
   '--disable-background-networking',
-  '--disable-features=Translate,BackForwardCache',
+  '--disable-component-update',
+  '--disable-breakpad',
+  '--disable-crash-reporter',
+  '--no-first-run',
+  '--no-default-browser-check',
+  '--disable-sync',
+  '--disable-features=Translate,BackForwardCache,MediaRouter',
   '--window-size=1280,900'
 ];
 
@@ -50,7 +57,23 @@ function chromiumDiagnostic() {
     managed = 'Puppeteer executable path unavailable: ' + e.message;
   }
   const found = candidates.filter(p => { try { return fs.existsSync(p); } catch { return false; } });
-  return [managed, found.length ? 'System Chrome/Chromium: ' + found.join(', ') : 'No system Chrome/Chromium executable detected.'].filter(Boolean).join('\n');
+  let runtime = '';
+  try {
+    const p = puppeteer.executablePath();
+    if (p && fs.existsSync(p)) {
+      try {
+        const version = execFileSync(p, ['--version'], { encoding: 'utf8', timeout: 10000, stdio: ['ignore','pipe','pipe'] }).trim();
+        runtime += 'Chrome test launch: ' + version;
+      } catch (e) {
+        runtime += 'Chrome test launch failed: ' + String(e.message || e).split('\\n')[0];
+      }
+      try {
+        const missing = execFileSync('bash', ['-lc', 'ldd ' + JSON.stringify(p) + ' 2>/dev/null | grep "not found" || true'], { encoding: 'utf8', timeout: 10000 }).trim();
+        if (missing) runtime += '\\nMissing shared libraries:\\n' + missing;
+      } catch {}
+    }
+  } catch {}
+  return [managed, found.length ? 'System Chrome/Chromium: ' + found.join(', ') : 'No system Chrome/Chromium executable detected.', runtime].filter(Boolean).join('\n');
 }
 
 function profilePath(businessId) {
@@ -170,7 +193,22 @@ function scheduleRestart(businessId, generation, delay = 5000) {
 async function startBusiness(businessId, force = false) {
   await db.ready;
 
-  if (starting.has(businessId) && !force) return;
+  if (starting.has(businessId) && !force) return startupPromises.get(businessId);
+  if (starting.has(businessId) && force) {
+    const pending = startupPromises.get(businessId);
+    const old = clients.get(businessId);
+    if (old) {
+      manualStops.add(old);
+      try { await old.destroy(); } catch {}
+      if (clients.get(businessId) === old) clients.delete(businessId);
+    }
+    // Invalidate callbacks belonging to the old startup before creating a new one.
+    generations.set(businessId, (generations.get(businessId) || 0) + 1);
+    starting.delete(businessId);
+    if (pending) {
+      // The old promise will time out/resolve from its own callbacks; do not reuse it.
+    }
+  }
   if (clients.has(businessId) && !force) return;
 
   if (force) {
@@ -201,6 +239,7 @@ async function startBusiness(businessId, force = false) {
     if (startupResolved) return;
     startupResolved = true;
     clearTimeout(startupTimeout);
+    if (startupPromises.get(businessId) === startupPromise) startupPromises.delete(businessId);
     resolveStartup(value);
   };
   const startupTimeout = setTimeout(() => finishStartup('timeout'), 25000);
@@ -210,6 +249,12 @@ async function startBusiness(businessId, force = false) {
   // Recover from a crashed Chromium process before creating a new one.
   clearChromiumLocks(businessId);
 
+  for (const dir of [
+    path.join(__dirname, 'data', 'chrome-config', String(businessId)),
+    path.join(__dirname, 'data', 'chrome-cache', String(businessId)),
+    path.join(__dirname, 'data', 'chrome-crashpad', String(businessId))
+  ]) fs.mkdirSync(dir, { recursive: true });
+
   const client = new Client({
     authStrategy: new LocalAuth({
       clientId: 'business-' + businessId,
@@ -217,10 +262,16 @@ async function startBusiness(businessId, force = false) {
     }),
     puppeteer: {
       headless: true,
-      dumpio: false,
+      dumpio: String(process.env.WHATSAPP_DEBUG_BROWSER || '').toLowerCase() === 'true',
       args: CHROME_ARGS,
       protocolTimeout: 180000,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath()
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+      env: {
+        ...process.env,
+        XDG_CONFIG_HOME: path.join(__dirname, 'data', 'chrome-config', String(businessId)),
+        XDG_CACHE_HOME: path.join(__dirname, 'data', 'chrome-cache', String(businessId)),
+        CHROME_CRASHPAD_HANDLER_DATABASE: path.join(__dirname, 'data', 'chrome-crashpad', String(businessId))
+      }
     },
     qrMaxRetries: 10
   });
@@ -396,7 +447,9 @@ async function startBusiness(businessId, force = false) {
       await db.setWa(businessId, 'ERROR', shown, null).catch(() => {});
       console.error('WhatsApp initialization failed for business', businessId, shown);
       finishStartup('init-error');
-      if (launchFailure) scheduleRestart(businessId, generation, 15000);
+      // Do not auto-retry browser launch failures. Repeated Chromium crashes can
+      // create overlapping sessions and detached-frame errors. The web UI's
+      // Reconnect button performs a single explicit retry.
     }
   };
 
