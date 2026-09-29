@@ -14,8 +14,8 @@ function cleanLines(t){return String(t||'').split(/\r?\n/).map(x=>x.replace(/\s+
 function firstMatch(lines,patterns){for(const l of lines)for(const p of patterns){const m=l.match(p);if(m)return m[1].trim()}return ''}
 function num(v){return Number(String(v||'').replace(/,/g,''))||0}
 function afterLabel(lines,label){const re=new RegExp('^\\s*'+label+'\\s*[:\\-]?\\s*(.+)$','i');for(const l of lines){const m=l.match(re);if(m)return m[1].trim()}return ''}
-function findAllGst(text){return [...String(text||'').matchAll(/\\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9][Z][A-Z0-9]\\b/gi)].map(x=>x[0].toUpperCase())}
-function findPan(text){return (String(text||'').match(/\\b[A-Z]{5}[0-9]{4}[A-Z]\\b/i)||[])[0]||''}
+function findAllGst(text){return [...String(text||'').matchAll(/\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9][Z][A-Z0-9]\\b/gi)].map(x=>x[0].toUpperCase())}
+function findPan(text){return (String(text||'').match(/\b[A-Z]{5}[0-9]{4}[A-Z]\\b/i)||[])[0]||''}
 function skuFromBill(name,hsn){return db.makeSku(name,hsn)}
 function parseBill(text){
   const lines=cleanLines(text);
