@@ -108,6 +108,22 @@ function parseBill(text){
     });
   };
 
+  // Highest-priority parser for PDF text where the invoice table is flattened
+  // into one text stream. Locate each HSN row and recover the product name
+  // from the numbered item immediately before that HSN. This prevents header
+  // fields such as Phone/GSTIN/Transport from becoming part of the product name.
+  const flatRowRe=/\\b(\\d{3,8})\\b\\s+([\\d,.]+)\\s+([A-Z]{2,10})\\s+([\\d,]+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)\\s+(\\d+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)/g;
+  let flatMatch;
+  while((flatMatch=flatRowRe.exec(flat))){
+    const before=flat.slice(0,flatMatch.index);
+    const nameMatches=[...before.matchAll(/\\b(\\d+)\\s+([A-Za-z][A-Za-z0-9 &/().-]*?)\\s*$/g)];
+    const nm=nameMatches.length?nameMatches[nameMatches.length-1]:null;
+    if(!nm)continue;
+    const productName=nm[2].trim();
+    if(/^(?:No\\.?|Sr\\.?|HSN|SAC|Qty|Rate|Taxable|Value|IGST|Total|Amount|Service|Product)$/i.test(productName))continue;
+    addItem(productName,flatMatch[1],num(flatMatch[2]),flatMatch[3],num(flatMatch[4]),num(flatMatch[5]),num(flatMatch[6]),num(flatMatch[7]),num(flatMatch[8]));
+  }
+
   // First try the original PDF's normal line-by-line table layout.
   const lineRowRe=/^(\d+)\s+(.+?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?:\s+.*)?$/i;
   for(const line of lines){
