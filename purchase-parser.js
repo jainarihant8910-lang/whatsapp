@@ -30,7 +30,7 @@ function parseBill(text){
     const vals=[...l.matchAll(new RegExp('(?:₹|Rs\\.?|INR)?\\s*('+NUM+')','gi'))].map(m=>num(m[1]));
     return vals.length?vals[vals.length-1]:0;
   };
-  const moneyAny=(re)=>{const m=raw.match(new RegExp(re.source+'[^0-9₹]*('+NUM+')',re.flags.replace('g','i')));return m?num(m[1]):0};
+  const moneyAny=(re)=>{const m=raw.match(new RegExp(re.source+'[^0-9]*('+NUM+')',re.flags.replace('g','i')));return m?num(m[1]):0};
   const invoiceNo=find(/Invoice\s*(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9\/\-]+)(?=\s|$)/i).replace(/Invoice$/i,'');
   const invoiceDate=find(/Invoice\s*Date\s*[:\-]?\s*([0-9A-Za-z\/\-]+)/i);
   const challanNumber=find(/Challan\s*No\.?\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
