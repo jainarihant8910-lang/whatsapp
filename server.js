@@ -180,7 +180,7 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
     // column order. If that happens, render the PDF page and OCR it before
     // giving up, so a readable invoice does not get rejected just because its
     // table layout was extracted poorly.
-    if(!parsed.items.length && r.file.mimetype==='application/pdf' && String(process.env.PURCHASE_PDF_OCR||'').toLowerCase()==='true'){
+    if(!parsed.items.length && r.file.mimetype==='application/pdf' ){
       try{
         const ocrText=await ocrImage(await pdfToPng(r.file.buffer));
         if(ocrText.trim()){
