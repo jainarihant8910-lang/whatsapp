@@ -37,3 +37,5 @@ The first non-empty line is delivered_to. The remaining lines are quantity item.
 
 PRODUCTION
 Use HTTPS, NODE_ENV=production, a strong bootstrap password, regular backups, and never commit .env, database files or WhatsApp session files.
+
+<!-- final CI validation marker -->
