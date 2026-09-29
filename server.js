@@ -108,29 +108,26 @@ function parseBill(text){
     });
   };
 
-  // Parse only the actual product-table region. This is deliberately isolated
-  // from Customer Detail, Phone, GSTIN, Transport and other invoice headers.
-  const tableStart=flat.search(/Sr\.?\s*No\.?\s+Name\s+of\s+Product/i);
-  const tableText=tableStart>=0?flat.slice(tableStart):flat;
-  const tableEnd=tableText.search(/\s+Total\s+\d+(?:[,.]\d+)?\s+[A-Z]{2,10}\s+[\d,]+(?:\.\d+)?/i);
-  const productText=tableEnd>0?tableText.slice(0,tableEnd):tableText;
-
-  // Each product row has a serial number followed by the product name, then
-  // HSN and the numeric columns. Capture the name only between serial and HSN.
-  const productRowRe=/(?:^|\s)(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?=\s+\d+[.)]?\s|\s+Total\b|$)/gi;
-  let pm;
-  while((pm=productRowRe.exec(productText))){
-    addItem(pm[2],pm[3],num(pm[4]),pm[5],num(pm[6]),num(pm[7]),num(pm[8]),num(pm[9]),num(pm[10]));
+  // Parse product rows only from the actual invoice table.
+  // The supplied PDF extracts each product row as one clean line, so prefer
+  // that representation and never let customer/header text enter the name.
+  const tableHeaderIndex=lines.findIndex(l=>/Sr\.?\s*No\.?/i.test(l) || /Name\s+of\s+Product/i.test(l));
+  const tableLines=tableHeaderIndex>=0?lines.slice(tableHeaderIndex+1):lines;
+  const productLineRe=/^(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?:\s*)$/i;
+  for(const line of tableLines){
+    const m=line.replace(/\s+/g,' ').trim().match(productLineRe);
+    if(m){
+      addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
+    }
   }
 
-  // Fallback for PDF layouts that put the table header and each row on
-  // separate lines: never search the whole invoice for a product name.
+  // Fallback for a PDF extractor that splits a product row across lines.
   if(!items.length){
-    const tableLines=lines.slice(Math.max(0,lines.findIndex(x=>/Sr\.?\s*No\.?/i.test(x))));
-    for(let i=0;i<tableLines.length;i++){
-      const row=tableLines.slice(i,i+3).join(' ').replace(/\s+/g,' ').trim();
-      const rm=row.match(/^(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?:\s|$)/i);
-      if(rm)addItem(rm[2],rm[3],num(rm[4]),rm[5],num(rm[6]),num(rm[7]),num(rm[8]),num(rm[9]),num(rm[10]));
+    const tableText=(tableHeaderIndex>=0?lines.slice(tableHeaderIndex).join(' '):flat).replace(/\s+/g,' ').trim();
+    const fallbackRe=/(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?=\s+\d+[.)]?\s|\s+Total\b|$)/gi;
+    let m;
+    while((m=fallbackRe.exec(tableText))){
+      addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
     }
   }
   return {
