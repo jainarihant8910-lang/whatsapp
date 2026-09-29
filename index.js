@@ -372,6 +372,14 @@ async function startBusiness(businessId, force = false) {
       // It must never create an order or change stock.
       const stockLines = body.replace(/^\uFEFF/,'').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
       if (stockLines.length === 2 && stockLines[0].toLowerCase() === 'stock') {
+        const stockMessageId = message.id?._serialized || message.id?.$1 || message.id?.id || '';
+        if (stockMessageId) {
+          const already = await db.get('SELECT 1 FROM processed_messages WHERE business_id=? AND message_id=?',[businessId,stockMessageId]);
+          if (already) return;
+          await db.run('INSERT OR IGNORE INTO processed_messages(business_id,message_id,whatsapp_from,sender_phone,body) VALUES(?,?,?,?,?)',[businessId,stockMessageId,from,'','[STOCK QUERY]');
+          const claimed = await db.get('SELECT 1 FROM processed_messages WHERE business_id=? AND message_id=?',[businessId,stockMessageId]);
+          if (!claimed) return;
+        }
         const productName = stockLines[1];
         const product = await db.get(
           'SELECT name, sku, hsn_code, unit, current_stock, minimum_stock, purchase_price FROM items WHERE business_id=? AND name=? COLLATE NOCASE',
