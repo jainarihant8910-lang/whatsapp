@@ -25,12 +25,17 @@ function parseBill(text){
   const flat=raw.replace(/\r?\n/g,' ').replace(/\s+/g,' ').trim();
   const gstins=findAllGst(raw), pan=findPan(raw);
   const find=(re)=>{for(const l of lines){const m=l.match(re);if(m)return String(m[1]||'').trim()}const m=flat.match(re);return m?String(m[1]||'').trim():''};
-  const moneyFor=(re)=>{
-    const l=lines.find(x=>re.test(x))||'';
-    const vals=[...l.matchAll(new RegExp('(?:₹|Rs\\.?|INR)?\\s*('+NUM+')','gi'))].map(m=>num(m[1]));
-    return vals.length?vals[vals.length-1]:0;
+  const amountAfter=(re)=>{
+    for(let i=0;i<lines.length;i++){
+      if(!re.test(lines[i]))continue;
+      const same=[...lines[i].matchAll(new RegExp('(?:₹|Rs\\.?|INR)?\\s*('+NUM+')','gi'))].map(m=>num(m[1]));
+      if(same.length)return same[same.length-1];
+      for(let j=i+1;j<Math.min(lines.length,i+4);j++){
+        if(/^\\d[\\d,.]*$/.test(lines[j])||/^(?:₹|Rs\\.?|INR)\\s*[\\d,]+(?:\\.\\d+)?$/i.test(lines[j]))return num(lines[j]);
+      }
+    }
+    return 0;
   };
-  const moneyAny=(re)=>{const m=raw.match(new RegExp(re.source+'[^0-9]*('+NUM+')',re.flags.replace('g','i')));return m?num(m[1]):0};
   const invoiceNo=find(/Invoice\s*(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9\/\-]+)(?=\s|$)/i).replace(/Invoice$/i,'');
   const invoiceDate=find(/Invoice\s*Date\s*[:\-]?\s*([0-9A-Za-z\/\-]+)/i);
   const challanNumber=find(/Challan\s*No\.?\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
@@ -39,15 +44,18 @@ function parseBill(text){
   const transport=find(/^Transport\s+(.+)/i);
   const transportId=find(/Transport\s*ID\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
   const pos=find(/Place\s*of\s*Supply\s*[:\-]?\s*(.+?)(?=\s+Invoice\s*No|$)/i);
-  const invoiceTotal=moneyFor(/Total Amount After Tax/i)||moneyAny(/Total Amount After Tax/i);
-  const taxableTotal=moneyFor(/^Taxable Amount\s/i)||moneyAny(/Taxable Amount/i);
-  const taxTotal=moneyFor(/^Total Tax\s/i)||moneyAny(/Total Tax/i);
-  const igst=moneyFor(/^(?:Add\s*:\s*)?IGST\s/i)||moneyAny(/(?:Add\s*:\s*)?IGST/i);
-  const cgst=moneyFor(/^CGST\s/i)||moneyAny(/CGST/i), sgst=moneyFor(/^SGST\s/i)||moneyAny(/SGST/i);
+  const invoiceTotal=amountAfter(/Total Amount After Tax/i);
+  const taxableTotal=amountAfter(/^Taxable Amount\s/i);
+  const taxTotal=amountAfter(/^Total Tax\s/i);
+  const igst=amountAfter(/^Add\s*:\s*IGST\s/i);
+  const cgst=amountAfter(/^CGST\s/i), sgst=amountAfter(/^SGST\s/i);
 
   const customerIdx=lines.findIndex(l=>/Customer Detail/i.test(l));
   let buyerName=find(/^M\/S\.?\s+(.+)/i);
-  if(!buyerName&&customerIdx>=0)buyerName=lines[customerIdx+1]||'';
+  if(!buyerName&&customerIdx>=0){
+    const mIndex=lines.findIndex((l,idx)=>idx>=customerIdx&&/^M\/S\.?$/i.test(l));
+    buyerName=mIndex>=0?(lines[mIndex+1]||''):(lines[customerIdx+1]||'');
+  }
   let buyerGstin='';
   if(customerIdx>=0){
     for(let j=customerIdx;j<Math.min(lines.length,customerIdx+30);j++){
