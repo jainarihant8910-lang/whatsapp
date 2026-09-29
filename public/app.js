@@ -18,7 +18,7 @@ async function stockIn(id){const q=prompt('Quantity to add');if(q===null)return;
 async function ordersPage(){
   const d=await api('/api/orders');orders=d.orders||[];
   $('page').innerHTML=`<div class='bar'><div><h3>Orders</h3><p class='muted'>One row per WhatsApp message. Returns automatically add stock back.</p></div><button onclick="openReturnPicker()">↩ Quick return</button><button onclick="go('transactions')">Stock history</button></div>
-  <div class='panel tablewrap'><table><thead><tr><th>Order</th><th>Date</th><th>Delivered to</th><th>Items</th><th>Accepted</th><th>Returned</th><th>Status</th><th>Actions</th></tr></thead><tbody>${orders.map(o=>`<tr><td>#${o.id}</td><td>${esc(o.date)} ${esc(o.time)}</td><td>${esc(o.delivered_to)}</td><td>${n(o.total_items)}</td><td>${n(o.accepted_items)}</td><td>${n(o.returned_items||0)}</td><td><span class='badge ${String(o.status).toLowerCase()}'>${esc(o.status)}</span></td><td><button onclick="voice(${o.id})">🔊 Voice</button><button onclick="pdf('/api/orders/${o.id}/invoice-pdf')">🧾 Invoice PDF</button>${['SUCCESS','PARTIAL','PARTIAL_RETURN'].includes(o.status)?`<button onclick="openReturn(${o.id})">↩ Return</button>`:''}</td></tr>`).join('')}</tbody></table></div>`;
+  <div class='panel tablewrap'><table><thead><tr><th>Order</th><th>Date</th><th>Delivered to</th><th>Item names</th><th>Qty</th><th>Returned</th><th>Remaining</th><th>Status</th><th>Actions</th></tr></thead><tbody>${orders.map(o=>`<tr><td>#${o.id}</td><td>${esc(o.date)} ${esc(o.time)}</td><td>${esc(o.delivered_to)}</td><td>${esc(o.item_names||o.items||'View order')}</td><td>${n(o.accepted_items)}</td><td>${n(o.returned_items||0)}</td><td>${n(Math.max(0,Number(o.accepted_items||0)-Number(o.returned_items||0)))} </td><td><span class='badge ${String(o.status).toLowerCase()}'>${esc(o.status)}</span></td><td><button onclick="voice(${o.id})">🔊 Voice</button><button onclick="pdf('/api/orders/${o.id}/invoice-pdf')">🧾 Invoice PDF</button>${['SUCCESS','PARTIAL','PARTIAL_RETURN'].includes(o.status)?`<button onclick="openReturn(${o.id})">↩ Return</button>`:''}</td></tr>`).join('')}</tbody></table></div>`;
 }
 async function openReturnPicker(){
   try{
@@ -39,22 +39,19 @@ async function openReturnPicker(){
 async function openReturn(id){
   try{
     const d=await api('/api/orders/'+id);const o=d.order;
-    const history=await api('/api/orders/'+id+'/returns');
-    const returnedByItem={};
-    // Return records are summarized in the portal; server still validates every quantity.
-    const rows=(o.items||[]).filter(x=>Number(x.accepted_quantity)>0);
-    modal('Quick return — Order #'+id,`<p class='muted'>Enter the quantity actually returned. The system restores that quantity to stock and prevents returning more than was delivered.</p>
-      <div class='tablewrap'><table><thead><tr><th>Product</th><th>Delivered</th><th>Return now</th></tr></thead><tbody>
-      ${rows.map(x=>`<tr><td>${esc(x.item_name)}</td><td>${n(x.accepted_quantity)} ${esc(x.unit)}</td><td><input class='returnQty' data-item='${x.id}' type='number' min='0' max='${x.accepted_quantity}' step='0.01' value='0'></td></tr>`).join('')}
+    const rows=(o.items||[]).filter(x=>Number(x.remaining_quantity)>0);
+    modal('Quick return — Order #'+id,`<p class='muted'>Return only the remaining delivered quantity. After processing, the remaining quantity and invoice PDF are updated immediately.</p>
+      <div class='tablewrap'><table><thead><tr><th>Product</th><th>Delivered</th><th>Already returned</th><th>Remaining</th><th>Return now</th></tr></thead><tbody>
+      ${rows.map(x=>`<tr><td>${esc(x.item_name)}</td><td>${n(x.accepted_quantity)} ${esc(x.unit)}</td><td>${n(x.returned_quantity)} ${esc(x.unit)}</td><td><b>${n(x.remaining_quantity)} ${esc(x.unit)}</b></td><td><input class='returnQty' data-item='${x.id}' type='number' min='0' max='${x.remaining_quantity}' step='0.01' value='0'></td></tr>`).join('')}
       </tbody></table></div>
-      <small class='muted'>Previous returns: ${(history.returns||[]).length}</small>
+      <small class='muted'>Only returned quantities are added back to stock. The invoice PDF uses the remaining quantity.</small>
       <label>Reason<input id='returnReason' placeholder='Customer return / damaged / wrong item'></label>
-      <button id='saveReturn' class='primary'>Process return & add to stock</button>`);
+      <button id='saveReturn' class='primary'>Process return & update invoice</button>`);
     $('saveReturn').onclick=async()=>{
       const items=[...document.querySelectorAll('.returnQty')].map(x=>({order_item_id:Number(x.dataset.item),quantity:Number(x.value)})).filter(x=>x.quantity>0);
       if(!items.length){toast('Enter a return quantity.',true);return}
       await api('/api/orders/'+id+'/returns',{method:'POST',body:{items,reason:$('returnReason').value}});
-      $('modal').classList.add('hidden');toast('Return processed. Stock updated.');ordersPage();
+      $('modal').classList.add('hidden');toast('Return processed. Remaining quantity and invoice updated.');ordersPage();
     };
   }catch(e){toast(e.message,true)}
 }
