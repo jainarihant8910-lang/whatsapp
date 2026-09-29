@@ -38,7 +38,7 @@ function parseBill(text){
   const cgst=num((lines.find(l=>/^CGST\\s/i.test(l))||'').match(/([\\d,]+(?:\\.\\d+)?)/)?.[1]);
   const sgst=num((lines.find(l=>/^SGST\\s/i.test(l))||'').match(/([\\d,]+(?:\\.\\d+)?)/)?.[1]);
 
-  let buyerName=firstMatch(lines,[/^M\\/S\\.?\\s+(.+)/i]);
+  let buyerName=firstMatch(lines,[/^M\/S\.?\s+(.+)/i]);
   let buyerGstin='';
   const customerIdx=lines.findIndex(l=>/Customer Detail/i.test(l));
   if(customerIdx>=0){
