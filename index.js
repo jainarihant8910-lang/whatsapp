@@ -29,7 +29,20 @@ const CHROME_ARGS = [
 ];
 
 function browserDependenciesHint() {
-  return 'Chromium could not start. In Codespaces, run: npx puppeteer browsers install chrome';
+  return 'Chromium is unavailable or could not launch. First run: npx puppeteer browsers install chrome';
+}
+
+function chromiumDiagnostic() {
+  const candidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.CHROME_BIN,
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser'
+  ].filter(Boolean);
+  const found = candidates.filter(p => { try { return fs.existsSync(p); } catch { return false; } });
+  return found.length ? 'Detected Chrome/Chromium: ' + found.join(', ') : 'No system Chrome/Chromium executable detected.';
 }
 
 function profilePath(businessId) {
@@ -354,7 +367,7 @@ async function startBusiness(businessId, force = false) {
       retries.delete(businessId);
     } catch (e) {
       const msg = String(e?.message || e);
-      const launchFailure = /Failed to launch the browser process|Could not find expected browser|ENOENT|libatk|libnss|libgbm|Target closed/i.test(msg);
+      const launchFailure = /Failed to launch the browser process|Could not find expected browser|ENOENT|libatk|libnss|libgbm/i.test(msg);
       const conflict = /already running|userDataDir|user data directory|Singleton/i.test(msg);
 
       try { await client.destroy(); } catch {}
@@ -370,7 +383,7 @@ async function startBusiness(businessId, force = false) {
       }
 
       starting.delete(businessId);
-      const shown = launchFailure ? msg + '\n\n' + browserDependenciesHint() : msg;
+      const shown = launchFailure ? msg + '\n\n' + browserDependenciesHint() + '\n' + chromiumDiagnostic() : msg;
       await db.setWa(businessId, 'ERROR', shown, null).catch(() => {});
       console.error('WhatsApp initialization failed for business', businessId, shown);
       finishStartup('init-error');
