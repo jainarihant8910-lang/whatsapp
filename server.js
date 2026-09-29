@@ -108,57 +108,31 @@ function parseBill(text){
     });
   };
 
-  // Highest-priority parser for PDF text where the invoice table is flattened
-  // into one text stream. Locate each HSN row and recover the product name
-  // from the numbered item immediately before that HSN. This prevents header
-  // fields such as Phone/GSTIN/Transport from becoming part of the product name.
-  const flatRowRe=/\\b(\\d{3,8})\\b\\s+([\\d,.]+)\\s+([A-Z]{2,10})\\s+([\\d,]+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)\\s+(\\d+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)/g;
-  let flatMatch;
-  while((flatMatch=flatRowRe.exec(flat))){
-    const before=flat.slice(0,flatMatch.index);
-    const nameMatches=[...before.matchAll(/\\b(\\d+)\\s+([A-Za-z][A-Za-z0-9 &/().-]*?)\\s*$/g)];
-    const nm=nameMatches.length?nameMatches[nameMatches.length-1]:null;
-    if(!nm)continue;
-    const productName=nm[2].trim();
-    if(/^(?:No\\.?|Sr\\.?|HSN|SAC|Qty|Rate|Taxable|Value|IGST|Total|Amount|Service|Product)$/i.test(productName))continue;
-    addItem(productName,flatMatch[1],num(flatMatch[2]),flatMatch[3],num(flatMatch[4]),num(flatMatch[5]),num(flatMatch[6]),num(flatMatch[7]),num(flatMatch[8]));
+  // Parse only the actual product-table region. This is deliberately isolated
+  // from Customer Detail, Phone, GSTIN, Transport and other invoice headers.
+  const tableStart=flat.search(/Sr\.?\s*No\.?\s+Name\s+of\s+Product/i);
+  const tableText=tableStart>=0?flat.slice(tableStart):flat;
+  const tableEnd=tableText.search(/\s+Total\s+\d+(?:[,.]\d+)?\s+[A-Z]{2,10}\s+[\d,]+(?:\.\d+)?/i);
+  const productText=tableEnd>0?tableText.slice(0,tableEnd):tableText;
+
+  // Each product row has a serial number followed by the product name, then
+  // HSN and the numeric columns. Capture the name only between serial and HSN.
+  const productRowRe=/(?:^|\s)(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?=\s+\d+[.)]?\s|\s+Total\b|$)/gi;
+  let pm;
+  while((pm=productRowRe.exec(productText))){
+    addItem(pm[2],pm[3],num(pm[4]),pm[5],num(pm[6]),num(pm[7]),num(pm[8]),num(pm[9]),num(pm[10]));
   }
 
-  // First try the original PDF's normal line-by-line table layout.
-  const lineRowRe=/^(\d+)\s+(.+?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?:\s+.*)?$/i;
-  for(const line of lines){
-    const lm=line.replace(/\s+/g,' ').trim().match(lineRowRe);
-    if(lm)addItem(lm[2],lm[3],num(lm[4]),lm[5],num(lm[6]),num(lm[7]),num(lm[8]),num(lm[9]),num(lm[10]));
-  }
-
-  // If the PDF split a row across adjacent lines, join a small window.
+  // Fallback for PDF layouts that put the table header and each row on
+  // separate lines: never search the whole invoice for a product name.
   if(!items.length){
-    for(let i=0;i<lines.length;i++){
-      const joined=(lines[i]+' '+(lines[i+1]||'')+' '+(lines[i+2]||'')).replace(/\s+/g,' ').trim();
-      const jm=joined.match(/^(\d+)\s+(.+?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?:\s+.*)?$/i);
-      if(jm)addItem(jm[2],jm[3],num(jm[4]),jm[5],num(jm[6]),num(jm[7]),num(jm[8]),num(jm[9]),num(jm[10]));
+    const tableLines=lines.slice(Math.max(0,lines.findIndex(x=>/Sr\.?\s*No\.?/i.test(x))));
+    for(let i=0;i<tableLines.length;i++){
+      const row=tableLines.slice(i,i+3).join(' ').replace(/\s+/g,' ').trim();
+      const rm=row.match(/^(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?:\s|$)/i);
+      if(rm)addItem(rm[2],rm[3],num(rm[4]),rm[5],num(rm[6]),num(rm[7]),num(rm[8]),num(rm[9]),num(rm[10]));
     }
   }
-
-  // Robust table-row parser. It accepts the common GST invoice sequence:
-  // serial, product name, HSN, quantity, unit, rate, taxable, GST%, tax, total.
-  const rowRe=/(?:^|\s)(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+([\d,.]+)\s+([A-Z]{2,10})\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)(?=\s+\d+[.)]?\s|\s+Total\b|\s+Taxable\b|$)/gi;
-  let m;
-  while((m=rowRe.exec(flat)))addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
-
-  // Fallback: find each HSN + numeric tail and recover the product name
-  // from the immediately preceding numbered segment.
-  if(!items.length){
-    const hsnRe=/\b(\d{3,8})\b\s+([\d,.]+)\s+([A-Z]{2,10})\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)/g;
-    while((m=hsnRe.exec(flat))){
-      const before=flat.slice(0,m.index);
-      const serialMatch=before.match(/(?:^|\s)(\d+)[.)]?\s+(.+?)\s*$/);
-      if(!serialMatch)continue;
-      const name=serialMatch[2].trim();
-      addItem(name,m[1],num(m[2]),m[3],num(m[4]),num(m[5]),num(m[6]),num(m[7]),num(m[8]));
-    }
-  }
-
   return {
     supplier_name:sellerName,supplier_gstin:sellerGstin,supplier_address:sellerAddress,
     buyer_name:buyerName,buyer_gstin:buyerGstin,buyer_pan:buyerPan,seller_pan:sellerPan,
