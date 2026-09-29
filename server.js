@@ -9,7 +9,27 @@ const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:12*1024*102
 function hash(buf){return crypto.createHash('sha256').update(buf).digest('hex')}
 async function ocrImage(buf){const r=await Tesseract.recognize(buf,'eng',{logger:x=>{if(x.status==='recognizing text'&&Math.round((x.progress||0)*100)%20===0)console.log('OCR',Math.round((x.progress||0)*100)+'%')}});return r.data.text||''}
 function pdfToPng(buf){return new Promise((resolve,reject)=>{const dir=path.join(__dirname,'data','ocr');fs.mkdirSync(dir,{recursive:true});const base=path.join(dir,'scan-'+Date.now());const pdf=base+'.pdf';fs.writeFileSync(pdf,buf);execFile('pdftoppm',['-png','-f','1','-singlefile','-r','180',pdf,base],async e=>{try{fs.rmSync(pdf,{force:true});if(e)throw e;const p=base+'.png';const b=fs.readFileSync(p);fs.rmSync(p,{force:true});resolve(b)}catch(x){reject(x)}})})}
-async function extractText(file){if(file.mimetype!=='application/pdf')return ocrImage(file.buffer);let text='';try{text=(await pdfParse(file.buffer)).text||''}catch{}if(text.trim().length>80)return text;try{return await ocrImage(await pdfToPng(file.buffer))}catch{return text}}
+async function extractPdfText(buf){
+  // Support both pdf-parse v2 and the older v1 API during upgrades.
+  if(pdfParse&&typeof pdfParse.PDFParse==='function'){
+    const parser=new pdfParse.PDFParse({data:buf});
+    try{
+      const result=await parser.getText();
+      return result&&result.text?result.text:'';
+    }finally{
+      try{await parser.destroy()}catch{}
+    }
+  }
+  if(typeof pdfParse==='function'){
+    const result=await pdfParse(buf);
+    return result&&result.text?result.text:'';
+  }
+  return '';
+}
+async function extractText(file){
+  if(file.mimetype!=='application/pdf')return ocrImage(file.buffer);
+  try{return await extractPdfText(file.buffer)}catch(e){console.error('PDF text extraction failed:',e.message);return ''}
+}
 function cleanLines(t){return String(t||'').split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean)}
 function firstMatch(lines,patterns){for(const l of lines)for(const p of patterns){const m=l.match(p);if(m)return m[1].trim()}return ''}
 function num(v){return Number(String(v||'').replace(/,/g,''))||0}
@@ -275,7 +295,7 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
     // column order. If that happens, render the PDF page and OCR it before
     // giving up, so a readable invoice does not get rejected just because its
     // table layout was extracted poorly.
-    if(!parsed.items.length && r.file.mimetype==='application/pdf'){
+    if(!parsed.items.length && r.file.mimetype==='application/pdf' && String(process.env.PURCHASE_PDF_OCR||'').toLowerCase()==='true'){
       try{
         const ocrText=await ocrImage(await pdfToPng(r.file.buffer));
         if(ocrText.trim()){
@@ -293,7 +313,7 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
             text=parsed.raw_text;
           }
         }
-      }catch(e){console.error('Purchase OCR fallback failed:',e.message)}
+      }catch(e){console.error('Purchase PDF OCR fallback failed:',e.message)}
     }
 
     if(!parsed.items.length)return s.status(422).json({
