@@ -41,4 +41,21 @@ const retailText=[
   for(const x of p.items)assert(!/Phone|GSTIN|Transport|Invoice|Challan|E-Way|Sr\.?\s*No/i.test(x.name));
 }
 
+{
+  const multiLine=[
+    'Invoice','Items HSN Quantity MRP Rate Per Unit Tax Per Unit Amount',
+    '1','Croissants','1 Pack','120.00','141.60','25.49 (18)','167.09',
+    '2','Sourdough Bread','1 Pack','80.00','80.00','11.04 (13.8)','91.04',
+    'Total Amount 258.13'
+  ].join(String.fromCharCode(10));
+  const p=parseBill(multiLine);
+  assert.strictEqual(p.items.length,2);
+  assert.deepStrictEqual(p.items.map(x=>x.name),['Croissants','Sourdough Bread']);
+  assert.deepStrictEqual(p.items.map(x=>x.quantity),[1,1]);
+  assert.deepStrictEqual(p.items.map(x=>x.purchase_price),[141.6,80]);
+  assert.deepStrictEqual(p.items.map(x=>x.gst_rate),[18,13.8]);
+  assert.deepStrictEqual(p.items.map(x=>x.line_total),[167.09,91.04]);
+  assert.strictEqual(p.invoice_total,258.13);
+}
+
 console.log('Purchase parser tests passed.');
