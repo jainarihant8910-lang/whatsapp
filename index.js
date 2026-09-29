@@ -10,6 +10,8 @@ const AUTH_ROOT = path.join(__dirname, '.wwebjs_auth');
 const clients = new Map();
 const starting = new Set();
 const retries = new Map();
+const generations = new Map();
+const manualStops = new WeakSet();
 
 function profilePath(businessId) {
   return path.join(AUTH_ROOT, 'session-business-' + businessId);
@@ -124,10 +126,16 @@ async function startBusiness(businessId, force = false) {
   if (force) {
     const old = clients.get(businessId);
     if (old) {
+      manualStops.add(old);
       try { await old.destroy(); } catch {}
       clients.delete(businessId);
     }
+    starting.delete(businessId);
+    retries.delete(businessId);
   }
+
+  const generation = (generations.get(businessId) || 0) + 1;
+  generations.set(businessId, generation);
 
   starting.add(businessId);
   await db.setWa(businessId, 'STARTING', 'Starting WhatsApp…', null);
@@ -156,8 +164,10 @@ async function startBusiness(businessId, force = false) {
   clients.set(businessId, client);
 
   client.on('qr', async qr => {
+    if (generations.get(businessId) !== generation) return;
     try {
       const data = await qrcode.toDataURL(qr, { width: 360, margin: 1 });
+      if (generations.get(businessId) !== generation) return;
       await db.setWa(
         businessId,
         'WAITING_FOR_QR',
@@ -166,7 +176,19 @@ async function startBusiness(businessId, force = false) {
       );
       console.log('WhatsApp QR generated for business', businessId);
     } catch (e) {
-      await db.setWa(businessId, 'ERROR', 'Could not create QR: ' + e.message, null);
+      if (generations.get(businessId) !== generation) return;
+      await db.setWa(businessId, 'ERROR', 'Could not create QR: ' + e.message, null).catch(() => {});
+    }
+  });
+
+  // Puppeteer/Chromium can close while a restart is in progress. The error
+  // event must be handled so a TargetCloseError cannot terminate Node.
+  client.on('error', err => {
+    const message = String(err?.message || err);
+    console.error('WhatsApp client error for business', businessId, message);
+    if (generations.get(businessId) !== generation) return;
+    if (/Target closed|Protocol error|browser process/i.test(message)) {
+      db.setWa(businessId, 'DISCONNECTED', 'WhatsApp browser stopped. Reconnecting…', null).catch(() => {});
     }
   });
 
@@ -176,6 +198,7 @@ async function startBusiness(businessId, force = false) {
   });
 
   client.on('ready', () => {
+    if (generations.get(businessId) !== generation) return;
     starting.delete(businessId);
     retries.delete(businessId);
     db.setWa(businessId, 'CONNECTED', 'WhatsApp is connected.', null).catch(console.error);
@@ -183,22 +206,43 @@ async function startBusiness(businessId, force = false) {
   });
 
   client.on('auth_failure', message => {
+    if (generations.get(businessId) !== generation) return;
     starting.delete(businessId);
     db.setWa(businessId, 'AUTH_FAILURE', String(message), null).catch(console.error);
     console.error('WhatsApp authentication failed for business', businessId, message);
   });
 
   client.on('change_state', state => {
+    if (generations.get(businessId) !== generation) return;
     if (state !== 'CONNECTED') {
       db.setWa(businessId, 'DISCONNECTED', 'WhatsApp state: ' + state, null).catch(console.error);
     }
   });
 
   client.on('disconnected', async reason => {
-    clients.delete(businessId);
-    starting.delete(businessId);
-    await db.setWa(businessId, 'DISCONNECTED', 'Disconnected: ' + reason, null).catch(console.error);
-    setTimeout(() => startBusiness(businessId).catch(console.error), 5000);
+    const manual = manualStops.has(client);
+    manualStops.delete(client);
+
+    if (generations.get(businessId) === generation) {
+      clients.delete(businessId);
+      starting.delete(businessId);
+      await db.setWa(
+        businessId,
+        'DISCONNECTED',
+        manual ? 'WhatsApp disconnected. Starting a fresh session…' : 'Disconnected: ' + reason,
+        null
+      ).catch(() => {});
+    }
+
+    // A manual reconnect already starts the replacement client. Do not start
+    // another one from the old client's disconnected event.
+    if (!manual && generations.get(businessId) === generation) {
+      setTimeout(() => {
+        if (generations.get(businessId) === generation && !clients.has(businessId)) {
+          startBusiness(businessId).catch(console.error);
+        }
+      }, 5000);
+    }
   });
 
   client.on('message', async message => {
@@ -263,13 +307,14 @@ async function startBusiness(businessId, force = false) {
   const initialize = async () => {
     try {
       await client.initialize();
+      if (generations.get(businessId) !== generation) return;
       retries.delete(businessId);
     } catch (e) {
       const msg = String(e?.message || e);
       const conflict = /already running|userDataDir|user data directory|Singleton/i.test(msg);
 
       try { await client.destroy(); } catch {}
-      clients.delete(businessId);
+      if (clients.get(businessId) === client) clients.delete(businessId);
 
       if (conflict && initAttempt < 2) {
         initAttempt += 1;
@@ -281,13 +326,14 @@ async function startBusiness(businessId, force = false) {
       }
 
       starting.delete(businessId);
-      await db.setWa(businessId, 'ERROR', msg, null);
+      await db.setWa(businessId, 'ERROR', msg, null).catch(() => {});
       console.error('WhatsApp initialization failed for business', businessId, msg);
     }
   };
 
   initialize().catch(async e => {
     starting.delete(businessId);
+    if (clients.get(businessId) === client) clients.delete(businessId);
     await db.setWa(businessId, 'ERROR', String(e?.message || e), null).catch(() => {});
     console.error('WhatsApp initialization error:', e);
   });
@@ -301,6 +347,13 @@ async function startAll() {
     startBusiness(business.id).catch(console.error);
   }
 }
+
+process.on('unhandledRejection', reason => {
+  console.error('Unhandled promise rejection:', reason);
+});
+process.on('uncaughtException', error => {
+  console.error('Uncaught exception:', error);
+});
 
 module.exports = { startBusiness, startAll, clients };
 
