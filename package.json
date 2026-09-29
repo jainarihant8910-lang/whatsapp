@@ -1,24 +1,26 @@
 {
-  "name":"delivery-management-platform",
-  "version":"2.0.0",
-  "private":true,
-  "description":"Multi-business WhatsApp delivery, stock, purchase and GST invoicing platform",
-  "main":"server.js",
-  "scripts":{
-    "start":"node server.js",
-    "check":"node --check database.js && node --check server.js && node --check index.js",
-    "test":"node --check database.js && node --check server.js && node --check index.js"
+  "name": "delivery-management-platform",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Multi-business WhatsApp delivery, stock, purchase and GST invoicing platform",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check database.js && node --check platform-db.js && node --check server.js && node --check index.js && node --check public/app.js",
+    "test": "node smoke-test.js"
   },
-  "engines":{"node":">=22"},
-  "dependencies":{
-    "dotenv":"^16.6.1",
-    "express":"^5.2.1",
-    "multer":"^2.0.2",
-    "pdf-parse":"^1.1.1",
-    "pdfkit":"^0.17.2",
-    "qrcode":"^1.5.4",
-    "sqlite3":"^6.0.1",
-    "tesseract.js":"^7.0.0",
-    "whatsapp-web.js":"^1.34.7"
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "express": "^5.2.1",
+    "multer": "^2.0.2",
+    "pdf-parse": "^1.1.1",
+    "pdfkit": "^0.17.2",
+    "qrcode": "^1.5.4",
+    "sqlite3": "^6.0.1",
+    "tesseract.js": "^7.0.0",
+    "whatsapp-web.js": "^1.34.7"
   }
 }
