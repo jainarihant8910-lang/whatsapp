@@ -156,23 +156,31 @@ async function phone(message, client, businessId) {
     const old = await db.lid(businessId, lid);
     if (old) return old;
 
-    try {
-      const contact = await message.getContact();
-      const p = db.normalizePhone(contact?.number || contact?.id?.user || '');
-      if (p) {
-        await db.saveLid(businessId, lid, p);
-        return p;
-      }
-    } catch {}
-
+    // WhatsApp's newer LID format can hide the phone number from Contact.
+    // whatsapp-web.js provides getContactLidAndPhone specifically for this.
     try {
       const result = await client.getContactLidAndPhone([from]);
-      const p = db.normalizePhone(result?.[0]?.pn || result?.[0]?.phone || '');
+      const raw = result?.[0]?.pn || '';
+      const p = db.normalizePhone(String(raw).replace(/@c\.us$/i, ''));
       if (p) {
         await db.saveLid(businessId, lid, p);
         return p;
       }
-    } catch {}
+    } catch (e) {
+      console.error('LID -> phone lookup failed:', e.message);
+    }
+
+    try {
+      const contact = await message.getContact();
+      const raw = contact?.number || contact?.id?.user || '';
+      const p = db.normalizePhone(String(raw).replace(/@c\.us$/i, ''));
+      if (p) {
+        await db.saveLid(businessId, lid, p);
+        return p;
+      }
+    } catch (e) {
+      console.error('Contact phone lookup failed:', e.message);
+    }
 
     return null;
   }
@@ -365,17 +373,45 @@ async function startBusiness(businessId, force = false) {
     try {
       if (message.fromMe) return;
 
-      const parsed = parse(message.body);
-      if (!parsed) return;
+      const from = String(message.from || '');
+      const body = String(message.body || '');
+      console.log('WhatsApp incoming message for business', businessId, {
+        from,
+        type: message.type,
+        chars: body.length
+      });
+
+      const parsed = parse(body);
+      if (!parsed) {
+        await db.setWa(businessId, 'CONNECTED', 'Message received, but it does not match: Delivered To on line 1, then quantity + item on each next line.', null).catch(() => {});
+        console.log('WhatsApp message ignored: invalid order format');
+        return;
+      }
 
       const senderPhone = await phone(message, client, businessId);
-      if (!senderPhone) return;
+      if (!senderPhone) {
+        await db.setWa(businessId, 'CONNECTED', 'Message received, but WhatsApp did not expose the sender phone number. Check the allowed-number mapping.', null).catch(() => {});
+        console.log('WhatsApp message ignored: could not resolve sender phone from', from);
+        return;
+      }
 
       const allowed = await db.sender(businessId, senderPhone);
-      if (!allowed) return;
+      if (!allowed) {
+        await db.setWa(businessId, 'CONNECTED', 'Message received from an unapproved number. No order was created.', null).catch(() => {});
+        console.log('WhatsApp message ignored: sender not allowed', senderPhone);
+        return;
+      }
 
-      const whatsappMessageId = message.id?._serialized || message.id?.id;
-      if (!whatsappMessageId) return;
+      const whatsappMessageId =
+        message.id?._serialized ||
+        message.id?.$1 ||
+        message.id?.id ||
+        '';
+      if (!whatsappMessageId) {
+        await db.setWa(businessId, 'CONNECTED', 'Message received, but WhatsApp did not provide a message ID.', null).catch(() => {});
+        console.log('WhatsApp message ignored: missing message ID');
+        return;
+      }
 
       const t = now();
       const order = await db.createOrder({
@@ -385,11 +421,13 @@ async function startBusiness(businessId, force = false) {
         deliveredTo: parsed.deliveredTo,
         senderId: allowed.id,
         whatsappMessageId,
-        whatsappFrom: message.from,
-        body: message.body,
+        whatsappFrom: from,
+        body,
         senderPhone,
         items: parsed.items
       });
+
+      await db.setWa(businessId, 'CONNECTED', 'Last order received: #' + order.id + ' from ' + senderPhone, null).catch(() => {});
 
       if (order.confirmation_sent) return;
 
@@ -404,18 +442,29 @@ async function startBusiness(businessId, force = false) {
         ' item(s). Rejected: ' + order.rejected_items + ' item(s).';
 
       try {
-        const sent = await message.reply(reply);
+        const quotedId = whatsappMessageId;
+        // Use sendMessage with quotedMessageId instead of Message#reply().
+        // This also handles newer WhatsApp IDs where Message.id may expose $1.
+        const sent = await client.sendMessage(from, reply, {
+          quotedMessageId: quotedId,
+          ignoreQuoteErrors: true,
+          waitUntilMsgSent: true
+        });
         await db.confirmationSent(
           businessId,
           order.id,
-          sent?.id?._serialized || ''
+          sent?.id?._serialized || sent?.id?.$1 || sent?.id?.id || ''
         );
+        await db.setWa(businessId, 'CONNECTED', 'Order #' + order.id + ' processed and confirmation sent.', null).catch(() => {});
+        console.log('WhatsApp confirmation sent for order', order.id);
       } catch (e) {
         await db.confirmationPending(businessId, order.id);
-        console.error('Confirmation failed:', e.message);
+        await db.setWa(businessId, 'CONNECTED', 'Order #' + order.id + ' saved, but confirmation failed: ' + e.message, null).catch(() => {});
+        console.error('Confirmation failed for order', order.id + ':', e.message);
       }
     } catch (e) {
       console.error('WhatsApp message error:', e);
+      await db.setWa(businessId, 'CONNECTED', 'WhatsApp message processing error: ' + e.message, null).catch(() => {});
     }
   });
 
