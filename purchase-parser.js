@@ -134,6 +134,16 @@ function parseBill(text){
 
   for(const row of rebuiltRows){
     if(parseProductRowText(row,addItem))continue;
+    const rr=retailRowRe.exec(row);
+    if(rr){
+      const name=String(rr[2]||'').trim();
+      const hsn=(rr[3]&&/^\d+$/.test(rr[3]))?rr[3]:'';
+      const qty=num(rr[4]), unit=rr[5], rate=num(rr[7]), taxAmount=num(rr[8]), gstRate=rr[9]?num(rr[9]):0, total=num(rr[10]);
+      const taxable=money(qty*rate);
+      const gst=gstRate||((taxable>0&&taxAmount>0)?money(taxAmount/taxable*100):0);
+      addItem(name,hsn,qty,unit,rate,taxable,gst,taxAmount,total);
+      continue;
+    }
     const rm=new RegExp('^(\\d+)[.)]?\\s+(.+?)\\s+(?:(\\d{3,8})\\s+)?('+NUM+')\\s*([A-Za-z]{1,10})\\s+('+NUM+')\\s+('+NUM+')\\s+(?:(('+NUM+')\\s*)?(?:\\(([0-9]+(?:\\.[0-9]+)?)\\))?\\s+)?('+NUM+')$','i').exec(row);
     if(!rm)continue;
     const name=String(rm[2]||'').trim();
