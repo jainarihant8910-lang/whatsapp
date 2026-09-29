@@ -142,6 +142,6 @@ app.get("/api/purchase-bills/:id",auth,async(req,res)=>{const b=await db.getPurc
 app.post("/api/purchase-bills/:id/confirm",auth,async(req,res)=>{try{const b=await db.confirmPurchaseBill(num(req.params.id),req.auth.businessId,req.body.items||[]);res.json({success:true,bill:b});}catch(e){res.status(400).json({error:e.message});}});
 
 app.use((err,req,res,next)=>{console.error(err);res.status(400).json({error:err.message||"Request failed."});});
-app.get("*",(req,res)=>res.sendFile(path.join(PUBLIC_DIR,"index.html")));
+app.use((req,res)=>res.sendFile(path.join(PUBLIC_DIR,"index.html")));
 
 app.listen(PORT,"0.0.0.0",()=>console.log(`DELIVERY MANAGEMENT WEBSITE\nDashboard: http://localhost:${PORT}`));
