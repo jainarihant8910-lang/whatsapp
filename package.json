@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server.js",
     "check": "node --check database.js && node --check platform-db.js && node --check server.js && node --check index.js && node --check public/app.js",
-    "test": "node smoke-test.js"
+    "test": "node smoke-test.js",
+    "test:qr": "node qr-stress-test.js",
+    "test:all": "npm run check && npm test && npm run test:qr"
   },
   "engines": {
     "node": ">=22"
