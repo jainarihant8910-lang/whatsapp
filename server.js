@@ -20,23 +20,24 @@ function skuFromBill(name,hsn){return db.makeSku(name,hsn)}
 function parseBill(text){
   const lines=cleanLines(text);
   const raw=String(text||'');
+  const flat=raw.replace(/\r?\n/g,' ').replace(/\s+/g,' ').trim();
   const gstins=findAllGst(raw), pan=findPan(raw);
 
-  const find=(re)=>{for(const l of lines){const m=l.match(re);if(m)return String(m[1]||'').trim()}return ''};
+  const find=(re)=>{for(const l of lines){const m=l.match(re);if(m)return String(m[1]||'').trim()}const m=flat.match(re);return m?String(m[1]||'').trim():''};
   const money=(re)=>{
-    const l=lines.find(x=>re.test(x))||'';
+    const l=lines.find(x=>re.test(x))||((re.test(flat))?flat:'');
     const vals=[...l.matchAll(/(?:₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d+)?)/gi)].map(m=>num(m[1]));
     return vals.length?vals[vals.length-1]:0;
   };
 
-  const invoiceNo=find(/Invoice\s*(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
+  let invoiceNo=find(/Invoice\s*(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9\/\-]+)/i).replace(/Invoice$/i,'');
   const invoiceDate=find(/Invoice\s*Date\s*[:\-]?\s*([0-9A-Za-z\/\-]+)/i);
   const challanNumber=find(/Challan\s*No\.?\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
   const challanDate=find(/Challan\s*Date\s*[:\-]?\s*([0-9A-Za-z\/\-]+)/i);
   const eway=find(/E[- ]?Way\s*Bill\s*No\.?\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
   const transport=find(/^Transport\s+(.+)/i);
   const transportId=find(/Transport\s*ID\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
-  const pos=find(/Place\s*of\s*Supply\s*[:\-]?\s*(.+)/i);
+  const pos=find(/Place\s*of\s*Supply\s*[:\-]?\s*(.+?)(?=\s+Invoice\s*No|$)/i);
   const invoiceTotal=money(/Total Amount After Tax/i);
   const taxableTotal=money(/^Taxable Amount\s/i);
   const taxTotal=money(/^Total Tax\s/i);
@@ -83,22 +84,21 @@ function parseBill(text){
     });
   };
 
-  // Primary parser: scan the flattened document for table rows. This tolerates
-  // PDF/OCR line breaks between columns.
-  const flat=raw.replace(/\r?\n/g,' ').replace(/\s+/g,' ').trim();
-  const rowRe=/(?:^|\s)(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+([\d,.]+)\s+([A-Z]{2,10})\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)(?=\s+(?:\d+[.)]?\s+|Total\b|Taxable\b|$))/gi;
+  // Robust table-row parser. It accepts the common GST invoice sequence:
+  // serial, product name, HSN, quantity, unit, rate, taxable, GST%, tax, total.
+  const rowRe=/(?:^|\s)(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+([\d,.]+)\s+([A-Z]{2,10})\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)(?=\s+\d+[.)]?\s|\s+Total\b|\s+Taxable\b|$)/gi;
   let m;
   while((m=rowRe.exec(flat)))addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
 
-  // Secondary parser: locate an HSN code first, then consume the quantity/unit
-  // and the five numeric columns that normally follow it.
+  // Fallback: find each HSN + numeric tail and recover the product name
+  // from the immediately preceding numbered segment.
   if(!items.length){
     const hsnRe=/\b(\d{3,8})\b\s+([\d,.]+)\s+([A-Z]{2,10})\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)/g;
     while((m=hsnRe.exec(flat))){
-      const before=flat.slice(Math.max(0,m.index-160),m.index);
-      const serialMatch=before.match(/(?:^|\s)(\d+)[.)]?\s+([^\n]+?)\s*$/);
-      const name=(serialMatch?serialMatch[2]:before.split(/\s+/).slice(-10).join(' ')).trim();
-      if(!name||/^(?:Total|Taxable|Amount|Invoice)/i.test(name))continue;
+      const before=flat.slice(0,m.index);
+      const serialMatch=before.match(/(?:^|\s)(\d+)[.)]?\s+(.+?)\s*$/);
+      if(!serialMatch)continue;
+      const name=serialMatch[2].trim();
       addItem(name,m[1],num(m[2]),m[3],num(m[4]),num(m[5]),num(m[6]),num(m[7]),num(m[8]));
     }
   }
