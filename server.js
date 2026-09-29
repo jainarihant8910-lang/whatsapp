@@ -280,8 +280,15 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
       error:'The bill could be read, but the product table could not be identified. No stock was changed. Try the original PDF or a clear image of the full bill.'
     });
 
-    const existing=await db.get('SELECT id FROM purchase_bills WHERE business_id=? AND file_hash=?',[r.businessId,hash(r.file.buffer)]);
-    if(existing)return s.status(409).json({error:'This bill file was already uploaded',purchase_id:existing.id});
+    const existing=await db.get('SELECT id,status FROM purchase_bills WHERE business_id=? AND file_hash=?',[r.businessId,hash(r.file.buffer)]);
+    if(existing){
+      if(String(existing.status||'').toUpperCase()==='REVIEW'){
+        await db.run('DELETE FROM purchase_bill_items WHERE business_id=? AND purchase_bill_id=?',[r.businessId,existing.id]);
+        await db.run('DELETE FROM purchase_bills WHERE business_id=? AND id=?',[r.businessId,existing.id]);
+      }else{
+        return s.status(409).json({error:'This bill file was already imported',purchase_id:existing.id});
+      }
+    }
 
     const id=await db.createPurchase(r.businessId,{
       original_filename:r.file.originalname,
