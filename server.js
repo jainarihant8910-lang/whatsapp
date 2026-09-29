@@ -21,51 +21,57 @@ function parseBill(text){
   const lines=cleanLines(text);
   const raw=String(text||'');
   const gstins=findAllGst(raw), pan=findPan(raw);
-  const find=(re)=>{for(const l of lines){const m=l.match(re);if(m)return String(m[1]||'').trim()}return ''};
-  const money=(re)=>{const l=lines.find(x=>re.test(x))||'';const vals=[...l.matchAll(/(?:₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d+)?)/gi)].map(m=>num(m[1]));return vals.length?vals[vals.length-1]:0};
 
-  const invoiceNo=find(/Invoice\s*(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9\/-]+)/i);
-  const invoiceDate=find(/Invoice\s*Date\s*[:\-]?\s*([0-9A-Za-z\/-]+)/i);
-  const challanNumber=find(/Challan\s*No\.?\s*[:\-]?\s*([A-Z0-9\/-]+)/i);
-  const challanDate=find(/Challan\s*Date\s*[:\-]?\s*([0-9A-Za-z\/-]+)/i);
-  const eway=find(/E[- ]?Way\s*Bill\s*No\.?\s*[:\-]?\s*([A-Z0-9\/-]+)/i);
-  const transport=find(/^Transport\s+(.+)/i);
-  const transportId=find(/Transport\s*ID\s*[:\-]?\s*([A-Z0-9\/-]+)/i);
-  const pos=find(/Place\s*of\s*Supply\s*[:\-]?\s*(.+)/i);
+  const find=(re)=>{for(const l of lines){const m=l.match(re);if(m)return String(m[1]||'').trim()}return ''};
+  const money=(re)=>{
+    const l=lines.find(x=>re.test(x))||'';
+    const vals=[...l.matchAll(/(?:₹|Rs\\.?|INR)?\\s*([\\d,]+(?:\\.\\d+)?)/gi)].map(m=>num(m[1]));
+    return vals.length?vals[vals.length-1]:0;
+  };
+
+  const invoiceNo=find(/Invoice\\s*(?:No|Number)\\.?\\s*[:\\-]?\\s*([A-Z0-9\\/\\-]+)/i);
+  const invoiceDate=find(/Invoice\\s*Date\\s*[:\\-]?\\s*([0-9A-Za-z\\/\\-]+)/i);
+  const challanNumber=find(/Challan\\s*No\\.?\\s*[:\\-]?\\s*([A-Z0-9\\/\\-]+)/i);
+  const challanDate=find(/Challan\\s*Date\\s*[:\\-]?\\s*([0-9A-Za-z\\/\\-]+)/i);
+  const eway=find(/E[- ]?Way\\s*Bill\\s*No\\.?\\s*[:\\-]?\\s*([A-Z0-9\\/\\-]+)/i);
+  const transport=find(/^Transport\\s+(.+)/i);
+  const transportId=find(/Transport\\s*ID\\s*[:\\-]?\\s*([A-Z0-9\\/\\-]+)/i);
+  const pos=find(/Place\\s*of\\s*Supply\\s*[:\\-]?\\s*(.+)/i);
   const invoiceTotal=money(/Total Amount After Tax/i);
-  const taxableTotal=money(/^Taxable Amount\s/i);
-  const taxTotal=money(/^Total Tax\s/i);
-  const igst=money(/^(?:Add\s*:\s*)?IGST\s/i);
-  const cgst=money(/^CGST\s/i), sgst=money(/^SGST\s/i);
+  const taxableTotal=money(/^Taxable Amount\\s/i);
+  const taxTotal=money(/^Total Tax\\s/i);
+  const igst=money(/^(?:Add\\s*:\\s*)?IGST\\s/i);
+  const cgst=money(/^CGST\\s/i), sgst=money(/^SGST\\s/i);
 
   const customerIdx=lines.findIndex(l=>/Customer Detail/i.test(l));
-  let buyerName=find(/^M\/S\.?\s+(.+)/i);
+  let buyerName=find(/^M\\/S\\.?\\s+(.+)/i);
   if(!buyerName&&customerIdx>=0)buyerName=lines[customerIdx+1]||'';
-
   let buyerGstin='';
   if(customerIdx>=0){
-    for(let j=customerIdx;j<Math.min(lines.length,customerIdx+20);j++){
-      const m=lines[j].match(/\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9])\b/i);
+    for(let j=customerIdx;j<Math.min(lines.length,customerIdx+25);j++){
+      const m=lines[j].match(/\\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9])\\b/i);
       if(m){buyerGstin=m[1].toUpperCase();break}
     }
   }
-  if(!buyerGstin)buyerGstin=gstins[0]||'';
+  if(!buyerGstin&&gstins.length)buyerGstin=gstins[0];
   const buyerPan=buyerGstin?buyerGstin.slice(2,12):'';
 
-  let sellerName=find(/^For\s+(.+)/i);
+  let sellerName=find(/^For\\s+(.+)/i);
   if(!sellerName){
     const candidates=lines.slice(0,Math.max(0,customerIdx));
-    sellerName=candidates.find(x=>x&&!/^PAN\b|^TAX INVOICE\b|^ORIGINAL\b/i.test(x)&&!/\bCustomer Detail\b/i.test(x))||'';
+    sellerName=candidates.find(x=>x&&!/^PAN\\b|^TAX INVOICE\\b|^ORIGINAL\\b/i.test(x)&&!/Customer Detail/i.test(x))||'';
   }
-  const sellerGstin=gstins.length>1?gstins[gstins.length-1]:(gstins[0]||'');
+  const sellerGstin=gstins.length>1?gstins[gstins.length-1]:'';
   const sellerAddress='';
+  const sellerPan=pan&&pan!==buyerPan?pan:'';
 
   const items=[];
   const seen=new Set();
   const addItem=(name,hsn,q,unit,rate,taxable,gstRate,taxAmount,lineTotal)=>{
-    name=String(name||'').replace(/\s+/g,' ').trim();
+    name=String(name||'').replace(/\\s+/g,' ').trim();
     hsn=String(hsn||'').trim();
     if(!name||!hsn||!(q>0)||!(rate>0))return;
+    if(/^(total|taxable amount|tax|invoice|amount|grand total)$/i.test(name))return;
     const key=[name.toLowerCase(),hsn,q,rate].join('|');
     if(seen.has(key))return;
     seen.add(key);
@@ -77,50 +83,31 @@ function parseBill(text){
     });
   };
 
-  // PDF text extraction often keeps a visual table row on one line.
-  const inlineRe=/^\s*(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+([\d,.]+)\s+([A-Z]{2,8})\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s*$/i;
-  for(const l of lines){
-    const m=l.match(inlineRe);
-    if(m&&!/^(?:total|amount|taxable|invoice)/i.test(m[2]))addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
-  }
+  // Primary parser: scan the flattened document for table rows. This tolerates
+  // PDF/OCR line breaks between columns.
+  const flat=raw.replace(/\\r?\\n/g,' ').replace(/\\s+/g,' ').trim();
+  const rowRe=/(?:^|\\s)(\\d+)[.)]?\\s+(.+?)\\s+(\\d{3,8})\\s+([\\d,.]+)\\s+([A-Z]{2,10})\\s+([\\d,]+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)\\s+(\\d+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)(?=\\s+(?:\\d+[.)]?\\s+|Total\\b|Taxable\\b|$))/gi;
+  let m;
+  while((m=rowRe.exec(flat)))addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
 
-  // OCR/text extraction can split the same row across several lines.
+  // Secondary parser: locate an HSN code first, then consume the quantity/unit
+  // and the five numeric columns that normally follow it.
   if(!items.length){
-    for(let i=0;i<lines.length;i++){
-      const head=lines[i].match(/^\s*(\d+)[.)]?\s+(.+)$/);
-      if(!head||/^(?:total|taxable amount|tax|invoice)/i.test(head[2]))continue;
-      const block=[];
-      for(let j=i+1;j<Math.min(lines.length,i+20);j++){
-        if(/^\s*\d+[.)]?\s+/.test(lines[j])||/^Total(?:\s|$)/i.test(lines[j]))break;
-        block.push(lines[j]);
-      }
-      const all=[head[2],...block];
-      const hsnIndex=all.findIndex(x=>/^\d{3,8}$/.test(x));
-      if(hsnIndex<0)continue;
-      const name=all.slice(0,hsnIndex).join(' ');
-      const rest=all.slice(hsnIndex+1);
-      const qidx=rest.findIndex(x=>/^[\d,.]+\s+[A-Z]{2,8}$/i.test(x));
-      if(qidx<0)continue;
-      const qm=rest[qidx].match(/^([\d,.]+)\s+([A-Z]{2,8})$/i);
-      const q=num(qm[1]),unit=qm[2].toUpperCase();
-      const nums=rest.slice(qidx+1).flatMap(x=>/^[\d,]+(?:\.\d+)?$/.test(x)?[num(x)]:[]);
-      if(nums.length>=5)addItem(name,all[hsnIndex],q,unit,nums[0],nums[1],nums[2],nums[3],nums[4]);
+    const hsnRe=/\\b(\\d{3,8})\\b\\s+([\\d,.]+)\\s+([A-Z]{2,10})\\s+([\\d,]+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)\\s+(\\d+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)/g;
+    while((m=hsnRe.exec(flat))){
+      const before=flat.slice(Math.max(0,m.index-160),m.index);
+      const serialMatch=before.match(/(?:^|\\s)(\\d+)[.)]?\\s+([^\\n]+?)\\s*$/);
+      const name=(serialMatch?serialMatch[2]:before.split(/\\s+/).slice(-10).join(' ')).trim();
+      if(!name||/^(?:Total|Taxable|Amount|Invoice)/i.test(name))continue;
+      addItem(name,m[1],num(m[2]),m[3],num(m[4]),num(m[5]),num(m[6]),num(m[7]),num(m[8]));
     }
-  }
-
-  // Final fallback: flatten the complete extracted text and scan table rows.
-  if(!items.length){
-    const flat=raw.replace(/\r?\n/g,' ').replace(/\s+/g,' ').trim();
-    const globalRe=/(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+([\d,.]+)\s+([A-Z]{2,8})\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)(?=\s+\d+[.)]?\s+|$|\s+Total\b)/gi;
-    let m;
-    while((m=globalRe.exec(flat)))if(!/^(?:total|amount|taxable|invoice)/i.test(m[2]))addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
   }
 
   return {
     supplier_name:sellerName,supplier_gstin:sellerGstin,supplier_address:sellerAddress,
-    buyer_name:buyerName,buyer_gstin:buyerGstin,buyer_pan:buyerPan,seller_pan:pan,
+    buyer_name:buyerName,buyer_gstin:buyerGstin,buyer_pan:buyerPan,seller_pan:sellerPan,
     seller_phone:'',seller_address:sellerAddress,seller_state:'',seller_state_code:'',
-    seller_id:sellerGstin||pan||sellerName,buyer_id:buyerGstin||buyerPan||buyerName,
+    seller_id:sellerGstin||sellerPan||sellerName,buyer_id:buyerGstin||buyerPan||buyerName,
     invoice_number:invoiceNo,invoice_date:invoiceDate,place_of_supply:pos,
     challan_number:challanNumber,challan_date:challanDate,eway_bill_number:eway,
     transport,transport_id:transportId,taxable_total:taxableTotal,tax_total:taxTotal,
