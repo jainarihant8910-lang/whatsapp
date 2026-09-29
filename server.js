@@ -84,6 +84,22 @@ function parseBill(text){
     });
   };
 
+  // First try the original PDF's normal line-by-line table layout.
+  const lineRowRe=/^(\\d+)\\s+(.+?)\\s+(\\d{3,8})\\s+(\\d+(?:[,.]\\d+)?)\\s+([A-Z]{2,10})\\s+(\\d+(?:[,.]\\d+)?)\\s+(\\d+(?:[,.]\\d+)?)\\s+(\\d+(?:[,.]\\d+)?)\\s+(\\d+(?:[,.]\\d+)?)\\s+(\\d+(?:[,.]\\d+)?)(?:\\s+.*)?$/i;
+  for(const line of lines){
+    const lm=line.replace(/\\s+/g,' ').trim().match(lineRowRe);
+    if(lm)addItem(lm[2],lm[3],num(lm[4]),lm[5],num(lm[6]),num(lm[7]),num(lm[8]),num(lm[9]),num(lm[10]));
+  }
+
+  // If the PDF split a row across adjacent lines, join a small window.
+  if(!items.length){
+    for(let i=0;i<lines.length;i++){
+      const joined=(lines[i]+' '+(lines[i+1]||'')+' '+(lines[i+2]||'')).replace(/\\s+/g,' ').trim();
+      const jm=joined.match(/^(\\d+)\\s+(.+?)\\s+(\\d{3,8})\\s+(\\d+(?:[,.]\\d+)?)\\s+([A-Z]{2,10})\\s+(\\d+(?:[,.]\\d+)?)\\s+(\\d+(?:[,.]\\d+)?)\\s+(\\d+(?:[,.]\\d+)?)\\s+(\\d+(?:[,.]\\d+)?)\\s+(\\d+(?:[,.]\\d+)?)(?:\\s+.*)?$/i);
+      if(jm)addItem(jm[2],jm[3],num(jm[4]),jm[5],num(jm[6]),num(jm[7]),num(jm[8]),num(jm[9]),num(jm[10]));
+    }
+  }
+
   // Robust table-row parser. It accepts the common GST invoice sequence:
   // serial, product name, HSN, quantity, unit, rate, taxable, GST%, tax, total.
   const rowRe=/(?:^|\s)(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+([\d,.]+)\s+([A-Z]{2,10})\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)(?=\s+\d+[.)]?\s|\s+Total\b|\s+Taxable\b|$)/gi;
