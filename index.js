@@ -144,48 +144,32 @@ function parse(body) {
 }
 
 async function phone(message, client, businessId) {
-  const from = String(message.from || '');
-  if (!from || from.endsWith('@g.us')) return null;
-
-  if (from.endsWith('@c.us')) {
-    return db.normalizePhone(from.replace('@c.us', ''));
+  const from=String(message.from||'');
+  if(!from||from.endsWith('@g.us'))return null;
+  if(from.endsWith('@c.us'))return db.normalizePhone(from.replace('@c.us',''));
+  if(from.endsWith('@lid')){
+    const lid=from.replace('@lid','');
+    const old=await db.lid(businessId,lid);
+    if(old)return old;
+    try{
+      const result=await client.getContactLidAndPhone([from]);
+      const raw=result?.find?.(x=>String(x?.lid||'')===from)?.pn||result?.[0]?.pn||'';
+      const p=db.normalizePhone(String(raw).replace(/@c\.us$/i,''));
+      if(p){await db.saveLid(businessId,lid,p);return p}
+    }catch(e){console.error('LID -> phone lookup failed:',e.message)}
+    try{
+      const contact=await message.getContact();
+      const raw=contact?.number||contact?.id?.user||'';
+      const p=db.normalizePhone(String(raw).replace(/@c\.us$/i,''));
+      if(p){await db.saveLid(businessId,lid,p);return p}
+    }catch(e){console.error('Contact phone lookup failed:',e.message)}
+    try{
+      const contact=await client.getContactById(from);
+      const raw=contact?.number||contact?.id?.user||'';
+      const p=db.normalizePhone(String(raw).replace(/@c\.us$/i,''));
+      if(p){await db.saveLid(businessId,lid,p);return p}
+    }catch(e){console.error('Contact-by-LID lookup failed:',e.message)}
   }
-
-  if (from.endsWith('@lid')) {
-    const lid = from.replace('@lid', '');
-    const old = await db.lid(businessId, lid);
-    if (old) return old;
-
-    // WhatsApp's newer LID format can hide the phone number from Contact.
-    // whatsapp-web.js provides getContactLidAndPhone specifically for this.
-    try {
-      const result = await client.getContactLidAndPhone([from]);
-      const raw = result?.[0]?.pn || '';
-      console.log('Resolved WhatsApp LID', lid, 'to phone', raw || '(not available)');
-      const p = db.normalizePhone(String(raw).replace(/@c\.us$/i, ''));
-      if (p) {
-        await db.saveLid(businessId, lid, p);
-        return p;
-      }
-    } catch (e) {
-      console.error('LID -> phone lookup failed:', e.message);
-    }
-
-    try {
-      const contact = await message.getContact();
-      const raw = contact?.number || contact?.id?.user || '';
-      const p = db.normalizePhone(String(raw).replace(/@c\.us$/i, ''));
-      if (p) {
-        await db.saveLid(businessId, lid, p);
-        return p;
-      }
-    } catch (e) {
-      console.error('Contact phone lookup failed:', e.message);
-    }
-
-    return null;
-  }
-
   return null;
 }
 
@@ -386,7 +370,7 @@ async function startBusiness(businessId, force = false) {
       // stock
       // <product name>
       // It must never create an order or change stock.
-      const stockLines = body.split(/\\r?\\n/).map(x => x.trim()).filter(Boolean);
+      const stockLines = body.replace(/^\uFEFF/,'').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
       if (stockLines.length === 2 && stockLines[0].toLowerCase() === 'stock') {
         const productName = stockLines[1];
         const product = await db.get(
@@ -417,16 +401,13 @@ async function startBusiness(businessId, force = false) {
           : '📦 STOCK\\n\\nProduct: ' + productName + '\\nStatus: PRODUCT NOT FOUND';
 
         try {
-          const quotedId = message.id?._serialized || message.id?.$1 || message.id?.id || '';
-          let sent;
-          try {
-            sent = await message.reply(reply, undefined, { quotedMessageId: quotedId, ignoreQuoteErrors: true, waitUntilMsgSent: true });
-          } catch (replyError) {
-            console.error('Stock reply failed, trying direct send:', replyError.message);
-            sent = await client.sendMessage(from, reply, { quotedMessageId: quotedId, ignoreQuoteErrors: true, waitUntilMsgSent: true });
-          }
-          await db.setWa(businessId, 'CONNECTED', 'Stock enquiry answered for ' + productName + '.', null).catch(() => {});
-          console.log('WhatsApp stock reply sent for', productName, sent?.id?._serialized || '');
+          let sent=null;
+          try { sent=await message.reply(reply); } catch(replyError) { console.error('Stock Message#reply failed:',replyError.message); }
+          if(!sent){ try { sent=await client.sendMessage(from,reply); } catch(sendError) { console.error('Stock direct send failed:',sendError.message); } }
+          if(!sent){ try { const chat=await message.getChat(); sent=await chat.sendMessage(reply); } catch(chatError) { console.error('Stock chat send failed:',chatError.message); } }
+          if(!sent)throw new Error('WhatsApp returned no sent message');
+          await db.setWa(businessId,'CONNECTED','Stock enquiry answered for '+productName+'.',null).catch(()=>{});
+          console.log('WhatsApp stock reply sent for',productName,sent?.id?._serialized||'');
         } catch (e) {
           await db.setWa(businessId, 'CONNECTED', 'Stock enquiry received, but reply failed: ' + e.message, null).catch(() => {});
           console.error('WhatsApp stock reply failed:', e.message);
