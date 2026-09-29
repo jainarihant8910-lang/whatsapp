@@ -108,26 +108,27 @@ function parseBill(text){
     });
   };
 
-  // Parse product rows only from the actual invoice table.
-  // The supplied PDF extracts each product row as one clean line, so prefer
-  // that representation and never let customer/header text enter the name.
-  const tableHeaderIndex=lines.findIndex(l=>/Sr\.?\s*No\.?/i.test(l) || /Name\s+of\s+Product/i.test(l));
-  const tableLines=tableHeaderIndex>=0?lines.slice(tableHeaderIndex+1):lines;
-  const productLineRe=/^(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?:\s*)$/i;
-  for(const line of tableLines){
-    const m=line.replace(/\s+/g,' ').trim().match(productLineRe);
-    if(m){
-      addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
-    }
+  // Deterministic parser for the supplier's product table.
+  // Work on the flattened text AFTER "Name of Product / Service", so
+  // customer/header fields can never become part of a product name.
+  const headerPos=flat.search(/Name\s+of\s+Product\s*\/\s*Service/i);
+  const tableFlat=headerPos>=0?flat.slice(headerPos):flat;
+  const rowRe=/(?:^|\s)(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Za-z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?=\s+\d+[.)]?\s|\s+Total\b|\s+Total\s+in\s+words\b|$)/gi;
+  let row;
+  while((row=rowRe.exec(tableFlat))){
+    const name=row[2].replace(/\s+/g,' ').trim();
+    // Do not accept table labels or totals as products.
+    if(/^(?:No\.?|Name\s+of\s+Product|Product|Service|Total|Taxable|Amount|IGST|CGST|SGST)/i.test(name))continue;
+    addItem(name,row[3],num(row[4]),row[5],num(row[6]),num(row[7]),num(row[8]),num(row[9]),num(row[10]));
   }
 
-  // Fallback for a PDF extractor that splits a product row across lines.
+  // Last-resort parser for a PDF where the table loses serial-number
+  // boundaries but retains the HSN/qty/unit/rate sequence.
   if(!items.length){
-    const tableText=(tableHeaderIndex>=0?lines.slice(tableHeaderIndex).join(' '):flat).replace(/\s+/g,' ').trim();
-    const fallbackRe=/(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?=\s+\d+[.)]?\s|\s+Total\b|$)/gi;
-    let m;
-    while((m=fallbackRe.exec(tableText))){
-      addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
+    const hsnRowRe=/(?:^|\s)([A-Za-z][A-Za-z0-9 &().\/-]{2,120}?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Za-z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?=\s+\d+\s+|\s+Total\b|$)/gi;
+    let hr;
+    while((hr=hsnRowRe.exec(tableFlat))){
+      addItem(hr[1],hr[2],num(hr[3]),hr[4],num(hr[5]),num(hr[6]),num(hr[7]),num(hr[8]),num(hr[9]));
     }
   }
   return {
