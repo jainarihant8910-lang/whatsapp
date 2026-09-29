@@ -27,6 +27,11 @@ async function init(){
  await run('CREATE TABLE IF NOT EXISTS whatsapp_sessions(business_id INTEGER PRIMARY KEY,status TEXT DEFAULT "DISCONNECTED",message TEXT DEFAULT "",qr TEXT,updated_at TEXT DEFAULT CURRENT_TIMESTAMP)');
  await run('CREATE TABLE IF NOT EXISTS purchase_bills(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER NOT NULL,original_filename TEXT,file_type TEXT,file_hash TEXT,supplier_name TEXT DEFAULT "",supplier_gstin TEXT DEFAULT "",supplier_address TEXT DEFAULT "",invoice_number TEXT DEFAULT "",invoice_date TEXT DEFAULT "",place_of_supply TEXT DEFAULT "",raw_text TEXT DEFAULT "",status TEXT DEFAULT "REVIEW",created_at TEXT DEFAULT CURRENT_TIMESTAMP,confirmed_at TEXT,UNIQUE(business_id,file_hash))');
  await run('CREATE TABLE IF NOT EXISTS purchase_bill_items(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER NOT NULL,purchase_bill_id INTEGER NOT NULL,extracted_name TEXT,matched_item_id INTEGER,quantity REAL,unit TEXT DEFAULT "PCS",purchase_price REAL DEFAULT 0,gst_rate REAL DEFAULT 0,hsn_code TEXT DEFAULT "",taxable_value REAL DEFAULT 0,tax_amount REAL DEFAULT 0,line_total REAL DEFAULT 0,is_new_item INTEGER DEFAULT 0)');
+ const migrations=[
+  ['purchase_bills','buyer_name','TEXT DEFAULT ""'],['purchase_bills','buyer_gstin','TEXT DEFAULT ""'],['purchase_bills','buyer_pan','TEXT DEFAULT ""'],['purchase_bills','seller_pan','TEXT DEFAULT ""'],['purchase_bills','seller_phone','TEXT DEFAULT ""'],['purchase_bills','seller_address','TEXT DEFAULT ""'],['purchase_bills','seller_state','TEXT DEFAULT ""'],['purchase_bills','seller_state_code','TEXT DEFAULT ""'],['purchase_bills','seller_id','TEXT DEFAULT ""'],['purchase_bills','buyer_id','TEXT DEFAULT ""'],['purchase_bills','challan_number','TEXT DEFAULT ""'],['purchase_bills','challan_date','TEXT DEFAULT ""'],['purchase_bills','eway_bill_number','TEXT DEFAULT ""'],['purchase_bills','transport','TEXT DEFAULT ""'],['purchase_bills','transport_id','TEXT DEFAULT ""'],['purchase_bills','taxable_total','REAL DEFAULT 0'],['purchase_bills','tax_total','REAL DEFAULT 0'],['purchase_bills','cgst','REAL DEFAULT 0'],['purchase_bills','sgst','REAL DEFAULT 0'],['purchase_bills','igst','REAL DEFAULT 0'],['purchase_bills','invoice_total','REAL DEFAULT 0'],['purchase_bill_items','supplier_sku','TEXT DEFAULT ""']
+ ];
+ for(const [table,col,type] of migrations){const cols=await all('PRAGMA table_info('+table+')');if(!cols.some(x=>x.name===col))await run('ALTER TABLE '+table+' ADD COLUMN '+col+' '+type)}
+
  await run('CREATE TABLE IF NOT EXISTS invoices(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER NOT NULL,invoice_no TEXT,financial_year TEXT,customer_id INTEGER,invoice_date TEXT,status TEXT DEFAULT "DRAFT",place_of_supply TEXT DEFAULT "",payment_status TEXT DEFAULT "UNPAID",payment_method TEXT DEFAULT "",paid_amount REAL DEFAULT 0,subtotal REAL DEFAULT 0,cgst REAL DEFAULT 0,sgst REAL DEFAULT 0,igst REAL DEFAULT 0,total REAL DEFAULT 0,UNIQUE(business_id,invoice_no))');
  await run('CREATE TABLE IF NOT EXISTS invoice_items(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER NOT NULL,invoice_id INTEGER,item_id INTEGER,item_name TEXT,quantity REAL,unit TEXT,rate REAL,hsn_code TEXT,gst_rate REAL,taxable_value REAL,total_tax REAL,line_total REAL)');
  await run('CREATE TABLE IF NOT EXISTS audit_logs(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER,user_id INTEGER,action TEXT,entity TEXT,entity_id INTEGER,details TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
@@ -71,11 +76,61 @@ async function createInvoice(b,d){if(!Array.isArray(d.items)||!d.items.length)th
 async function finalizeInvoice(b,id){await run('BEGIN IMMEDIATE');try{const i=await invoice(b,id);if(!i||i.status!=='DRAFT')throw Error('Only draft invoices can be finalized');for(const x of i.items){const p=await get('SELECT current_stock FROM items WHERE business_id=? AND id=?',[b,x.item_id]);if(!p||p.current_stock<x.quantity)throw Error('Insufficient stock for '+x.item_name)}for(const x of i.items){await run('UPDATE items SET current_stock=current_stock-? WHERE business_id=? AND id=?',[x.quantity,b,x.item_id]);await run('INSERT INTO stock_transactions(business_id,item_id,type,quantity,reason) VALUES(?,?,"OUT",?,?)',[b,x.item_id,x.quantity,'Invoice '+i.invoice_no])}await run('UPDATE invoices SET status="FINALIZED" WHERE business_id=? AND id=?',[b,id]);await run('COMMIT');return invoice(b,id)}catch(e){await run('ROLLBACK').catch(()=>{});throw e}}
 async function cancelInvoice(b,id){await run('BEGIN IMMEDIATE');try{const i=await invoice(b,id);if(!i)throw Error('Invoice not found');if(i.status==='FINALIZED')for(const x of i.items){await run('UPDATE items SET current_stock=current_stock+? WHERE business_id=? AND id=?',[x.quantity,b,x.item_id]);await run('INSERT INTO stock_transactions(business_id,item_id,type,quantity,reason) VALUES(?,?,"REVERSAL",?,?)',[b,x.item_id,x.quantity,'Cancelled '+i.invoice_no])}await run('UPDATE invoices SET status="CANCELLED" WHERE business_id=? AND id=?',[b,id]);await run('COMMIT');return invoice(b,id)}catch(e){await run('ROLLBACK').catch(()=>{});throw e}}
 async function purchaseBills(b){return all('SELECT * FROM purchase_bills WHERE business_id=? ORDER BY id DESC LIMIT 200',[b])}
-async function createPurchase(b,d){const r=await run('INSERT INTO purchase_bills(business_id,original_filename,file_type,file_hash,supplier_name,supplier_gstin,supplier_address,invoice_number,invoice_date,place_of_supply,raw_text) VALUES(?,?,?,?,?,?,?,?,?,?,?)',[b,d.original_filename,d.file_type,d.file_hash,d.supplier_name||'',d.supplier_gstin||'',d.supplier_address||'',d.invoice_number||'',d.invoice_date||'',d.place_of_supply||'',d.raw_text||'']);return r.lastID}
+function makeSku(name,hsn=''){
+  const base=clean(name).toUpperCase().replace(/[^A-Z0-9]+/g,'').slice(0,10)||'ITEM';
+  const h=String(hsn||'').replace(/\D/g,'').slice(0,4);
+  return ('SKU-'+base+(h?'-'+h:'')).slice(0,40);
+}
+async function findPurchaseProduct(b,x){
+  const sku=clean(x.sku||x.supplier_sku);
+  if(sku){const p=await get('SELECT * FROM items WHERE business_id=? AND sku=? COLLATE NOCASE',[b,sku]);if(p)return p}
+  const name=clean(x.name||x.extracted_name);
+  if(name){const p=await get('SELECT * FROM items WHERE business_id=? AND name=? COLLATE NOCASE',[b,name]);if(p)return p}
+  if(name&&x.hsn_code){const rows=await all('SELECT * FROM items WHERE business_id=? AND hsn_code=?',[b,clean(x.hsn_code)]);const key=name.toLowerCase().replace(/[^a-z0-9]+/g,'');const p=rows.find(r=>r.name.toLowerCase().replace(/[^a-z0-9]+/g,'')===key);if(p)return p}
+  return null;
+}
+async function purchaseBills(b){return all('SELECT * FROM purchase_bills WHERE business_id=? ORDER BY id DESC LIMIT 200',[b])}
+async function createPurchase(b,d){
+  const r=await run('INSERT INTO purchase_bills(business_id,original_filename,file_type,file_hash,supplier_name,supplier_gstin,supplier_address,invoice_number,invoice_date,place_of_supply,raw_text,buyer_name,buyer_gstin,buyer_pan,seller_pan,seller_phone,seller_address,seller_state,seller_state_code,seller_id,buyer_id,challan_number,challan_date,eway_bill_number,transport,transport_id,taxable_total,tax_total,cgst,sgst,igst,invoice_total) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+  [b,d.original_filename,d.file_type,d.file_hash,d.supplier_name||'',d.supplier_gstin||'',d.supplier_address||'',d.invoice_number||'',d.invoice_date||'',d.place_of_supply||'',d.raw_text||'',d.buyer_name||'',d.buyer_gstin||'',d.buyer_pan||'',d.seller_pan||'',d.seller_phone||'',d.seller_address||'',d.seller_state||'',d.seller_state_code||'',d.seller_id||'',d.buyer_id||'',d.challan_number||'',d.challan_date||'',d.eway_bill_number||'',d.transport||'',d.transport_id||'',money(d.taxable_total),money(d.tax_total),money(d.cgst),money(d.sgst),money(d.igst),money(d.invoice_total)]);
+  return r.lastID;
+}
 async function purchase(b,id){const x=await get('SELECT * FROM purchase_bills WHERE business_id=? AND id=?',[b,id]);if(x)x.items=await all('SELECT * FROM purchase_bill_items WHERE business_id=? AND purchase_bill_id=?',[b,id]);return x}
-async function addPurchaseItem(b,id,x){const p=await get('SELECT id FROM items WHERE business_id=? AND name=? COLLATE NOCASE',[b,clean(x.name)]);await run('INSERT INTO purchase_bill_items(business_id,purchase_bill_id,extracted_name,matched_item_id,quantity,unit,purchase_price,gst_rate,hsn_code,taxable_value,tax_amount,line_total,is_new_item) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',[b,id,clean(x.name),p?.id||null,Number(x.quantity||0),clean(x.unit)||'PCS',money(x.purchase_price),money(x.gst_rate),clean(x.hsn_code),money(x.taxable_value),money(x.tax_amount),money(x.line_total),p?0:1])}
-async function confirmPurchase(b,id,rows){await run('BEGIN IMMEDIATE');try{const pb=await purchase(b,id);if(!pb||pb.status==='CONFIRMED')throw Error('Purchase bill is unavailable or already confirmed');for(const x of rows){let p=x.item_id?await get('SELECT * FROM items WHERE business_id=? AND id=?',[b,x.item_id]):await get('SELECT * FROM items WHERE business_id=? AND name=? COLLATE NOCASE',[b,clean(x.name)]);const q=Number(x.quantity);if(!(q>0))throw Error('Invalid purchase quantity');if(!p){const r=await run('INSERT INTO items(business_id,name,unit,current_stock,opening_stock,purchase_price,gst_rate,hsn_code) VALUES(?,?,?,?,?,?,?,?)',[b,clean(x.name),clean(x.unit)||'PCS',q,q,money(x.purchase_price),money(x.gst_rate),clean(x.hsn_code)]);p=await get('SELECT * FROM items WHERE id=?',[r.lastID])}else await run('UPDATE items SET current_stock=current_stock+?,purchase_price=?,gst_rate=?,hsn_code=?,unit=? WHERE business_id=? AND id=?',[q,money(x.purchase_price),money(x.gst_rate),clean(x.hsn_code),clean(x.unit)||'PCS',b,p.id]);await run('INSERT INTO stock_transactions(business_id,item_id,type,quantity,reason) VALUES(?,?,"IN",?,?)',[b,p.id,q,'Purchase bill '+(pb.invoice_number||id)])}await run('UPDATE purchase_bills SET status="CONFIRMED",confirmed_at=CURRENT_TIMESTAMP WHERE business_id=? AND id=?',[b,id]);await run('COMMIT');return purchase(b,id)}catch(e){await run('ROLLBACK').catch(()=>{});throw e}}
+async function addPurchaseItem(b,id,x){
+  const p=await findPurchaseProduct(b,x);
+  await run('INSERT INTO purchase_bill_items(business_id,purchase_bill_id,extracted_name,matched_item_id,quantity,unit,purchase_price,gst_rate,hsn_code,taxable_value,tax_amount,line_total,is_new_item,supplier_sku) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+  [b,id,clean(x.name),p?.id||null,Number(x.quantity||0),clean(x.unit)||'PCS',money(x.purchase_price),money(x.gst_rate),clean(x.hsn_code),money(x.taxable_value),money(x.tax_amount),money(x.line_total),p?0:1,clean(x.supplier_sku||x.sku)]);
+}
+async function confirmPurchase(b,id,rows){
+  await run('BEGIN IMMEDIATE');
+  try{
+    const pb=await purchase(b,id);
+    if(!pb||pb.status==='CONFIRMED')throw Error('Purchase bill is unavailable or already confirmed');
+    const extracted=pb.items||[];
+    for(let n=0;n<extracted.length;n++){
+      const x=rows[n]||extracted[n];
+      const q=Number(x.quantity??extracted[n].quantity);
+      if(!(q>0))throw Error('Invalid purchase quantity for '+(x.name||extracted[n].extracted_name));
+      let p=await findPurchaseProduct(b,x);
+      const sku=clean(x.sku||x.supplier_sku||extracted[n].supplier_sku)||makeSku(x.name||extracted[n].extracted_name,x.hsn_code||extracted[n].hsn_code);
+      if(!p){
+        const r=await run('INSERT INTO items(business_id,name,sku,hsn_code,unit,current_stock,opening_stock,purchase_price,gst_rate) VALUES(?,?,?,?,?,?,?,?,?)',
+          [b,clean(x.name||extracted[n].extracted_name),sku,clean(x.hsn_code||extracted[n].hsn_code),clean(x.unit||extracted[n].unit)||'PCS',q,q,money(x.purchase_price??extracted[n].purchase_price),money(x.gst_rate??extracted[n].gst_rate)]);
+        p=await get('SELECT * FROM items WHERE id=?',[r.lastID]);
+      } else {
+        await run('UPDATE items SET current_stock=current_stock+?,purchase_price=?,gst_rate=?,hsn_code=CASE WHEN ?<>"" THEN ? ELSE hsn_code END,unit=?,sku=CASE WHEN (sku IS NULL OR sku="") THEN ? ELSE sku END WHERE business_id=? AND id=?',
+          [q,money(x.purchase_price??extracted[n].purchase_price),money(x.gst_rate??extracted[n].gst_rate),clean(x.hsn_code||extracted[n].hsn_code),clean(x.hsn_code||extracted[n].hsn_code),clean(x.unit||extracted[n].unit)||'PCS',sku,b,p.id]);
+      }
+      await run('UPDATE purchase_bill_items SET matched_item_id=?,is_new_item=0,supplier_sku=? WHERE business_id=? AND purchase_bill_id=? AND id=?',
+        [p.id,clean(x.sku||x.supplier_sku||extracted[n].supplier_sku),b,id,extracted[n].id]);
+      await run('INSERT INTO stock_transactions(business_id,item_id,type,quantity,reason) VALUES(?,?,"IN",?,?)',[b,p.id,q,'Purchase bill '+(pb.invoice_number||id)]);
+    }
+    await run('UPDATE purchase_bills SET status="CONFIRMED",confirmed_at=CURRENT_TIMESTAMP WHERE business_id=? AND id=?',[b,id]);
+    await run('COMMIT');
+    return purchase(b,id);
+  }catch(e){await run('ROLLBACK').catch(()=>{});throw e}
+}
 async function dashboard(b){const one=async(s)=>Number((await get(s,[b]))?.c||0);return {orders:await one('SELECT COUNT(*) c FROM orders WHERE business_id=?'),products:await one('SELECT COUNT(*) c FROM items WHERE business_id=?'),lowStock:await one('SELECT COUNT(*) c FROM items WHERE business_id=? AND current_stock<=minimum_stock'),todayOrders:await one('SELECT COUNT(*) c FROM orders WHERE business_id=? AND date=date("now","localtime")'),pending:await one('SELECT COUNT(*) c FROM orders WHERE business_id=? AND status="PENDING"'),invoices:await one('SELECT COUNT(*) c FROM invoices WHERE business_id=?'),purchases:await one('SELECT COUNT(*) c FROM purchase_bills WHERE business_id=?'),stockValue:money((await get('SELECT COALESCE(SUM(current_stock*purchase_price),0) v FROM items WHERE business_id=?',[b]))?.v)}}
 async function waStatus(b){return get('SELECT * FROM whatsapp_sessions WHERE business_id=?',[b])} async function setWa(b,s,m,q){return run('INSERT INTO whatsapp_sessions(business_id,status,message,qr,updated_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(business_id) DO UPDATE SET status=excluded.status,message=excluded.message,qr=excluded.qr,updated_at=CURRENT_TIMESTAMP',[b,s,m||'',q||null])}
 async function audit(b,u,a,e,id,d){return run('INSERT INTO audit_logs(business_id,user_id,action,entity,entity_id,details) VALUES(?,?,?,?,?,?)',[b,u,a,e,id,d||''])}
-module.exports={get,all,run,ready,register,login,session,logout,business,updateBusiness,items,addItem,editItem,stockIn,transactions,senders,addSender,delSender,sender,lid,saveLid,createOrder,orders,order,confirmationSent,confirmationPending,customers,addCustomer,findCustomerByName,invoices,invoice,createInvoice,finalizeInvoice,cancelInvoice,purchaseBills,createPurchase,purchase,addPurchaseItem,confirmPurchase,dashboard,waStatus,setWa,audit,normalizePhone};
+module.exports={get,all,run,ready,register,login,session,logout,business,updateBusiness,items,addItem,editItem,stockIn,transactions,senders,addSender,delSender,sender,lid,saveLid,createOrder,orders,order,confirmationSent,confirmationPending,customers,addCustomer,findCustomerByName,invoices,invoice,createInvoice,finalizeInvoice,cancelInvoice,purchaseBills,createPurchase,purchase,addPurchaseItem,confirmPurchase,makeSku,dashboard,waStatus,setWa,audit,normalizePhone};
