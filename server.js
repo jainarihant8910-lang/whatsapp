@@ -245,7 +245,57 @@ app.post('/api/invoices',async(r,s)=>{try{s.status(201).json({invoice:await db.c
 app.get('/api/invoices/:id/pdf',async(r,s)=>{const i=await db.invoice(r.businessId,Number(r.params.id)),b=await db.business(r.businessId);if(!i)return s.status(404).end();pdfInvoice(s,'invoice-'+i.invoice_no,b,i)});
 app.get('/api/orders/:id/invoice-pdf',async(r,s)=>{const o=await db.order(r.businessId,Number(r.params.id)),b=await db.business(r.businessId);if(!o)return s.status(404).end();const cust=await db.findCustomerByName(r.businessId,o.delivered_to);const items=o.items.filter(x=>Number(x.remaining_quantity)>0).map(x=>{const q=Number(x.remaining_quantity)||0;const rate=Number(x.rate)||0;const taxable=Math.round(q*rate*100)/100;const gst=Number(x.gst_rate)||0;const tax=Math.round(taxable*gst/100*100)/100;return {...x,quantity:q,taxable_value:taxable,total_tax:tax,line_total:Math.round((taxable+tax)*100)/100}});const tax=items.reduce((a,x)=>a+Number(x.total_tax||0),0);const subtotal=items.reduce((a,x)=>a+Number(x.taxable_value||0),0);const same=!!(b.state_code&&cust?.state_code&&b.state_code===cust.state_code);const inv={invoice_no:(b.invoice_prefix||'INV')+'-ORDER-'+String(o.id).padStart(4,'0'),invoice_date:o.date,customer_name:o.delivered_to,customer_address:cust?.address||'',customer_phone:cust?.phone||'',customer_gstin:cust?.gstin||'',place_of_supply:cust?.state?(cust.state+' '+(cust.state_code||'')): '',challan_no:'',challan_date:'',eway_bill_no:'',transport:'',subtotal,cgst:same?tax/2:0,sgst:same?tax/2:0,igst:same?0:tax,total:subtotal+tax,items};pdfInvoice(s,'invoice-order-'+o.id,b,inv)});
 app.get('/api/purchases',async(r,s)=>s.json({purchases:await db.purchaseBills(r.businessId)})); app.get('/api/purchases/:id',async(r,s)=>s.json({purchase:await db.purchase(r.businessId,Number(r.params.id))}));
-app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{try{if(!r.file)return s.status(400).json({error:'Upload a PDF or image'});const text=await extractText(r.file),parsed=parseBill(text);if(!parsed.items.length)return s.status(422).json({error:'The bill was readable, but no product rows could be identified. The extraction format was not recognized.'});const existing=await db.get('SELECT id FROM purchase_bills WHERE business_id=? AND file_hash=?',[r.businessId,hash(r.file.buffer)]);if(existing)return s.status(409).json({error:'This bill file was already uploaded',purchase_id:existing.id});const id=await db.createPurchase(r.businessId,{original_filename:r.file.originalname,file_type:r.file.mimetype,file_hash:hash(r.file.buffer),...parsed});for(const x of parsed.items)await db.addPurchaseItem(r.businessId,id,x);s.json({success:true,purchase:await db.purchase(r.businessId,id),extracted:parsed})}catch(e){console.error('Purchase extraction error:',e);s.status(400).json({error:e.message})}});
+app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
+  try{
+    if(!r.file)return s.status(400).json({error:'Upload a PDF or image'});
+    let text=await extractText(r.file);
+    let parsed=parseBill(text);
+
+    // Some PDFs contain plenty of readable text but destroy the visual table
+    // column order. If that happens, render the PDF page and OCR it before
+    // giving up, so a readable invoice does not get rejected just because its
+    // table layout was extracted poorly.
+    if(!parsed.items.length && r.file.mimetype==='application/pdf'){
+      try{
+        const ocrText=await ocrImage(await pdfToPng(r.file.buffer));
+        if(ocrText.trim()){
+          const ocrParsed=parseBill(ocrText);
+          if(ocrParsed.items.length){
+            parsed={...ocrParsed,
+              supplier_name:ocrParsed.supplier_name||parsed.supplier_name,
+              supplier_gstin:ocrParsed.supplier_gstin||parsed.supplier_gstin,
+              buyer_name:ocrParsed.buyer_name||parsed.buyer_name,
+              buyer_gstin:ocrParsed.buyer_gstin||parsed.buyer_gstin,
+              invoice_number:ocrParsed.invoice_number||parsed.invoice_number,
+              invoice_date:ocrParsed.invoice_date||parsed.invoice_date,
+              raw_text:text+'\\n\\n[OCR FALLBACK]\\n'+ocrText
+            };
+            text=parsed.raw_text;
+          }
+        }
+      }catch(e){console.error('Purchase OCR fallback failed:',e.message)}
+    }
+
+    if(!parsed.items.length)return s.status(422).json({
+      error:'The bill could be read, but the product table could not be identified. No stock was changed. Try the original PDF or a clear image of the full bill.'
+    });
+
+    const existing=await db.get('SELECT id FROM purchase_bills WHERE business_id=? AND file_hash=?',[r.businessId,hash(r.file.buffer)]);
+    if(existing)return s.status(409).json({error:'This bill file was already uploaded',purchase_id:existing.id});
+
+    const id=await db.createPurchase(r.businessId,{
+      original_filename:r.file.originalname,
+      file_type:r.file.mimetype,
+      file_hash:hash(r.file.buffer),
+      ...parsed
+    });
+    for(const x of parsed.items)await db.addPurchaseItem(r.businessId,id,x);
+    s.json({success:true,purchase:await db.purchase(r.businessId,id),extracted:parsed});
+  }catch(e){
+    console.error('Purchase extraction error:',e);
+    s.status(400).json({error:e.message});
+  }
+});
 app.post('/api/purchases/:id/confirm',async(r,s)=>{try{s.json({purchase:await db.confirmPurchase(r.businessId,Number(r.params.id),r.body.items||[])})}catch(e){s.status(400).json({error:e.message})}});
 app.get('/api/whatsapp/status',async(r,s)=>{try{s.json({status:await db.waStatus(r.businessId)})}catch(e){s.status(500).json({error:e.message})}}); app.post('/api/whatsapp/restart',async(r,s)=>{try{const worker=require('./index');await worker.startBusiness(r.businessId,true);s.json({success:true})}catch(e){s.status(400).json({error:e.message})}});
 app.get('/api/settings',async(r,s)=>s.json({business:await db.business(r.businessId)})); app.put('/api/settings',async(r,s)=>s.json({business:await db.updateBusiness(r.businessId,r.body)}));
