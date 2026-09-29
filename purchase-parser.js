@@ -3,7 +3,7 @@ const NUM='[\\d,]+(?:\\.\\d+)?';
 function cleanLines(text){
   return String(text||'').split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
 }
-function num(v){return Number(String(v??'').replace(/,/g,''))||0}
+function num(v){return Number(String(v??'').replace(/[₹]|Rs\.?|INR/gi,'').replace(/,/g,'').trim())||0}
 function money(v){return Math.round(num(v)*100)/100}
 function clean(v){return String(v??'').trim().slice(0,500)}
 function findAllGst(text){return [...String(text||'').matchAll(/\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9]\b/gi)].map(x=>x[0].toUpperCase())}
@@ -45,9 +45,9 @@ function parseBill(text){
   const transportId=find(/Transport\s*ID\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
   const pos=find(/Place\s*of\s*Supply\s*[:\-]?\s*(.+?)(?=\s+Invoice\s*No|$)/i);
   const invoiceTotal=amountAfter(/Total Amount After Tax/i);
-  const taxableTotal=amountAfter(/^Taxable Amount\s/i);
-  const taxTotal=amountAfter(/^Total Tax\s/i);
-  const igst=amountAfter(/^Add\s*:\s*IGST\s/i);
+  const taxableTotal=amountAfter(/^Taxable Amount\b/i);
+  const taxTotal=amountAfter(/^Total Tax\b/i);
+  const igst=amountAfter(/^Add\s*:\s*IGST\b/i);
   const cgst=amountAfter(/^CGST\s/i), sgst=amountAfter(/^SGST\s/i);
 
   const customerIdx=lines.findIndex(l=>/Customer Detail/i.test(l));
