@@ -38,11 +38,15 @@ function parseBill(text){
   const transport=find(/^Transport\s+(.+)/i);
   const transportId=find(/Transport\s*ID\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
   const pos=find(/Place\s*of\s*Supply\s*[:\-]?\s*(.+?)(?=\s+Invoice\s*No|$)/i);
-  const invoiceTotal=money(/Total Amount After Tax/i);
-  const taxableTotal=money(/^Taxable Amount\s/i);
-  const taxTotal=money(/^Total Tax\s/i);
-  const igst=money(/^(?:Add\s*:\s*)?IGST\s/i);
-  const cgst=money(/^CGST\s/i), sgst=money(/^SGST\s/i);
+  const moneyAny=(re)=>{
+    const m=raw.match(new RegExp(re.source+'[^0-9₹]*([\\d,]+(?:\\.\\d+)?)',re.flags.replace('g','i')));
+    return m?num(m[1]):0;
+  };
+  const invoiceTotal=money(/Total Amount After Tax/i)||moneyAny(/Total Amount After Tax/i);
+  const taxableTotal=money(/^Taxable Amount\s/i)||moneyAny(/Taxable Amount/i);
+  const taxTotal=money(/^Total Tax\s/i)||moneyAny(/Total Tax/i);
+  const igst=money(/^(?:Add\s*:\s*)?IGST\s/i)||moneyAny(/(?:Add\s*:\s*)?IGST/i);
+  const cgst=money(/^CGST\s/i)||moneyAny(/CGST/i), sgst=money(/^SGST\s/i)||moneyAny(/SGST/i);
 
   const customerIdx=lines.findIndex(l=>/Customer Detail/i.test(l));
   let buyerName=find(/^M\/S\.?\s+(.+)/i);
