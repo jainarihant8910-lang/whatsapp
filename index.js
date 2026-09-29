@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { execFile } = require('child_process');
+const puppeteer = require('puppeteer');
 
 const AUTH_ROOT = path.join(__dirname, '.wwebjs_auth');
 const clients = new Map();
@@ -41,8 +42,15 @@ function chromiumDiagnostic() {
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser'
   ].filter(Boolean);
+  let managed = '';
+  try {
+    const p = puppeteer.executablePath();
+    if (p) managed = fs.existsSync(p) ? 'Puppeteer Chrome: ' + p : 'Puppeteer Chrome path not found: ' + p;
+  } catch (e) {
+    managed = 'Puppeteer executable path unavailable: ' + e.message;
+  }
   const found = candidates.filter(p => { try { return fs.existsSync(p); } catch { return false; } });
-  return found.length ? 'Detected Chrome/Chromium: ' + found.join(', ') : 'No system Chrome/Chromium executable detected.';
+  return [managed, found.length ? 'System Chrome/Chromium: ' + found.join(', ') : 'No system Chrome/Chromium executable detected.'].filter(Boolean).join('\n');
 }
 
 function profilePath(businessId) {
@@ -211,7 +219,8 @@ async function startBusiness(businessId, force = false) {
       headless: true,
       dumpio: false,
       args: CHROME_ARGS,
-      protocolTimeout: 180000
+      protocolTimeout: 180000,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath()
     },
     qrMaxRetries: 10
   });
@@ -404,11 +413,15 @@ async function startBusiness(businessId, force = false) {
 
 async function startAll() {
   await db.ready;
-  const rows = await db.all('SELECT id FROM businesses ORDER BY id');
+  // Do not start every tenant's Chromium session at server boot. A small
+  // Codespace can run out of memory/CPU when several WhatsApp Web browsers
+  // are opened together. The web app starts the requested business lazily.
+  if (String(process.env.WHATSAPP_START_ALL || '').toLowerCase() !== 'true') {
+    console.log('WhatsApp startup mode: lazy (business starts when its web session is opened)');
+    return;
+  }
 
-  // Do not launch several Chromium/WhatsApp sessions at the exact same time.
-  // Codespaces has limited CPU/RAM and simultaneous Chromium startups can cause
-  // "Target closed" / "Failed to launch the browser process" and endless QR loops.
+  const rows = await db.all('SELECT id FROM businesses ORDER BY id');
   for (const business of rows) {
     try {
       const milestone = await startBusiness(business.id);
@@ -416,10 +429,6 @@ async function startAll() {
     } catch (e) {
       console.error('WhatsApp startup failed for business', business.id, e.message);
     }
-
-    // Leave a small gap after each Chromium launch. This is deliberately
-    // sequential because Codespaces can kill one Chromium target when several
-    // WhatsApp Web sessions start together.
     await new Promise(resolve => setTimeout(resolve, 8000));
   }
 }
