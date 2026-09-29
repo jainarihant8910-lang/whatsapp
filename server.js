@@ -5,7 +5,7 @@ app.use(express.json({limit:'3mb'})); app.use(express.urlencoded({extended:true}
 function cookieToken(req){const m=String(req.headers.cookie||'').match(/(?:^|;)\s*dm_token=([^;]+)/);return m?decodeURIComponent(m[1]):''}
 async function auth(req,res,next){try{const s=await db.session(cookieToken(req));if(!s)return res.status(401).json({error:'Login required'});req.session=s;req.businessId=s.business_id;req.userId=s.user_id;next()}catch(e){res.status(500).json({error:e.message})}}
 function csrf(req,res,next){if(['GET','HEAD','OPTIONS'].includes(req.method))return next();const c=String(req.headers['x-csrf-token']||'');if(!c)return res.status(403).json({error:'CSRF token missing'});db.get('SELECT csrf_hash FROM sessions WHERE token_hash=?',[crypto.createHash('sha256').update(cookieToken(req)).digest('hex')]).then(s=>{if(!s||s.csrf_hash!==crypto.createHash('sha256').update(c).digest('hex'))return res.status(403).json({error:'Invalid CSRF token'});next()}).catch(e=>res.status(500).json({error:e.message}))}
-const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:12*1024*1024},fileFilter:(r,f,cb)=>cb(null,['application/pdf','image/jpeg','image/png','image/webp'].includes(f.mimetype))});
+const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:25*1024*1024},fileFilter:(r,f,cb)=>cb(null,['application/pdf','image/jpeg','image/png','image/webp'].includes(f.mimetype))});
 function hash(buf){return crypto.createHash('sha256').update(buf).digest('hex')}
 async function ocrImage(buf){
   const opts={logger:x=>{if(x.status==='recognizing text'&&Math.round((x.progress||0)*100)%20===0)console.log('OCR',Math.round((x.progress||0)*100)+'%')}};
@@ -18,14 +18,34 @@ async function ocrImage(buf){
     return r.data.text||'';
   }
 }
-async function pdfToPng(buf){
+async function pdfInfoAndScreenshots(buf){
   const parser=new pdfParse.PDFParse({data:buf});
   try{
-    const result=await parser.getScreenshot({first:1,desiredWidth:1800,imageBuffer:true,imageDataUrl:false});
-    const page=result&&result.pages&&result.pages[0];
-    if(!page||!page.data)throw new Error('PDF screenshot rendering returned no image');
-    return Buffer.from(page.data);
+    let total=1;
+    try{
+      const info=await parser.getInfo({parsePageInfo:true});
+      total=Math.max(1,Number(info.total)||Number(info.pages?.length)||1);
+    }catch(e){console.error('PDF page-count extraction failed:',e.message)}
+    const result=await parser.getScreenshot({desiredWidth:1800,imageBuffer:true,imageDataUrl:false});
+    const pages=Array.isArray(result?.pages)?result.pages.filter(p=>p?.data).map(p=>Buffer.from(p.data)):[];
+    return {total:Math.max(total,pages.length||0),pages};
   }finally{try{await parser.destroy()}catch{}}
+}
+async function pdfToPng(buf){
+  const x=await pdfInfoAndScreenshots(buf);
+  if(!x.pages.length)throw new Error('PDF screenshot rendering returned no images');
+  return x.pages[0];
+}
+async function ocrPdfPages(buf){
+  const x=await pdfInfoAndScreenshots(buf);
+  if(!x.pages.length)return {text:'',pages:0};
+  const chunks=[];
+  for(let i=0;i<x.pages.length;i++){
+    console.log('Purchase OCR page '+(i+1)+'/'+x.pages.length);
+    const t=await ocrImage(x.pages[i]);
+    if(t.trim())chunks.push('\n[PAGE '+(i+1)+']\n'+t);
+  }
+  return {text:chunks.join('\n'),pages:x.pages.length};
 }
 async function extractPdfText(buf){
   // Support both pdf-parse v2 and the older v1 API during upgrades.
@@ -190,22 +210,42 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
     // column order. If that happens, render the PDF page and OCR it before
     // giving up, so a readable invoice does not get rejected just because its
     // table layout was extracted poorly.
-    if(!parsed.items.length && r.file.mimetype==='application/pdf' ){
+    if(r.file.mimetype==='application/pdf'){
       try{
-        const ocrText=await ocrImage(await pdfToPng(r.file.buffer));
-        if(ocrText.trim()){
-          const ocrParsed=parseBill(ocrText);
-          if(ocrParsed.items.length){
-            parsed={...ocrParsed,
-              supplier_name:ocrParsed.supplier_name||parsed.supplier_name,
-              supplier_gstin:ocrParsed.supplier_gstin||parsed.supplier_gstin,
-              buyer_name:ocrParsed.buyer_name||parsed.buyer_name,
-              buyer_gstin:ocrParsed.buyer_gstin||parsed.buyer_gstin,
-              invoice_number:ocrParsed.invoice_number||parsed.invoice_number,
-              invoice_date:ocrParsed.invoice_date||parsed.invoice_date,
-              raw_text:text+'\\n\\n[OCR FALLBACK]\\n'+ocrText
-            };
-            text=parsed.raw_text;
+        const pdfScan=await pdfInfoAndScreenshots(r.file.buffer);
+        // A digital PDF may have perfectly extractable text on page 1 but
+        // additional products on later pages. For multi-page bills we OCR every
+        // rendered page and merge it with the native PDF text.
+        // For a one-page bill OCR is used only when native extraction found no rows.
+        const shouldOcr=!parsed.items.length || pdfScan.pages.length>1;
+        if(shouldOcr){
+          const chunks=[];
+          for(let i=0;i<pdfScan.pages.length;i++){
+            console.log('Purchase OCR page '+(i+1)+'/'+pdfScan.pages.length);
+            const t=await ocrImage(pdfScan.pages[i]);
+            if(t.trim())chunks.push('[PAGE '+(i+1)+']\\n'+t);
+          }
+          const ocrText=chunks.join('\\n\\n');
+          if(ocrText.trim()){
+            const ocrParsed=parseBill(ocrText);
+            if(ocrParsed.items.length){
+              parsed={...ocrParsed,
+                supplier_name:ocrParsed.supplier_name||parsed.supplier_name,
+                supplier_gstin:ocrParsed.supplier_gstin||parsed.supplier_gstin,
+                buyer_name:ocrParsed.buyer_name||parsed.buyer_name,
+                buyer_gstin:ocrParsed.buyer_gstin||parsed.buyer_gstin,
+                invoice_number:ocrParsed.invoice_number||parsed.invoice_number,
+                invoice_date:ocrParsed.invoice_date||parsed.invoice_date,
+                taxable_total:ocrParsed.taxable_total||parsed.taxable_total,
+                tax_total:ocrParsed.tax_total||parsed.tax_total,
+                cgst:ocrParsed.cgst||parsed.cgst,
+                sgst:ocrParsed.sgst||parsed.sgst,
+                igst:ocrParsed.igst||parsed.igst,
+                invoice_total:ocrParsed.invoice_total||parsed.invoice_total,
+                raw_text:text+'\\n\\n[OCR FALLBACK - ALL PAGES]\\n'+ocrText
+              };
+              text=parsed.raw_text;
+            }
           }
         }
       }catch(e){console.error('Purchase PDF OCR fallback failed:',e.message)}
