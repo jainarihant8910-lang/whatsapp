@@ -121,7 +121,7 @@ function parseBill(text){
   const rebuiltRows=[];
   let pending='';
   for(const line of lines){
-    if(/^\d{1,4}[.)]?(?:\s+|$)/.test(line)){
+    if(/^\d{1,4}[.)]?\s*$/.test(line)){
       if(pending)rebuiltRows.push(pending);
       pending=line;
     }else if(pending && !/^(?:total|subtotal|taxable amount|total tax|grand total|invoice total|amount in words|terms|bank details|customer signature|authori[sz]ed signatory|page\s+\d+)/i.test(line)){
