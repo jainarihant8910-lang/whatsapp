@@ -27,7 +27,7 @@ const db=require('./platform-db');
     senderPhone:'919999999999',body:'Smoke Customer\\n2 Smoke Product '+suffix,
     items:[{quantity:2,item:'Smoke Product '+suffix}]
   });
-  if(order.status!=='SUCCESS'||order.accepted_items!==1)throw new Error('Order smoke test failed');
+  if(order.status!=='SUCCESS'||order.accepted_items!==2)throw new Error('Order smoke test failed');
   const duplicate=await db.createOrder({
     businessId:business.id,date:'2026-01-01',time:'10:00:00',
     deliveredTo:'Smoke Customer',senderId:sender.id,
