@@ -29,7 +29,7 @@ const CHROME_ARGS = [
 ];
 
 function browserDependenciesHint() {
-  return 'Chromium could not start. In Codespaces, run: npx puppeteer browsers install chrome --install-deps';
+  return 'Chromium could not start. In Codespaces, run: npx puppeteer browsers install chrome';
 }
 
 function profilePath(businessId) {
@@ -169,6 +169,21 @@ async function startBusiness(businessId, force = false) {
   generations.set(businessId, generation);
 
   starting.add(businessId);
+
+  // startAll() uses this promise to avoid starting several Chromium processes
+  // at the same instant. It resolves as soon as this session reaches a useful
+  // milestone (QR, authenticated, ready, error) or after a safety timeout.
+  let startupResolved = false;
+  let resolveStartup;
+  const startupPromise = new Promise(resolve => { resolveStartup = resolve; });
+  const finishStartup = value => {
+    if (startupResolved) return;
+    startupResolved = true;
+    clearTimeout(startupTimeout);
+    resolveStartup(value);
+  };
+  const startupTimeout = setTimeout(() => finishStartup('timeout'), 25000);
+
   await db.setWa(businessId, 'STARTING', 'Starting WhatsApp…', null);
 
   // Recover from a crashed Chromium process before creating a new one.
@@ -202,6 +217,7 @@ async function startBusiness(businessId, force = false) {
         data
       );
       console.log('WhatsApp QR generated for business', businessId);
+      finishStartup('qr');
     } catch (e) {
       if (generations.get(businessId) !== generation) return;
       await db.setWa(businessId, 'ERROR', 'Could not create QR: ' + e.message, null).catch(() => {});
@@ -216,6 +232,7 @@ async function startBusiness(businessId, force = false) {
     if (generations.get(businessId) !== generation) return;
     if (/Target closed|Protocol error|browser process/i.test(message)) {
       db.setWa(businessId, 'DISCONNECTED', 'WhatsApp browser stopped. Reconnecting…', null).catch(() => {});
+      finishStartup('client-error');
       scheduleRestart(businessId, generation);
     }
   });
@@ -223,6 +240,7 @@ async function startBusiness(businessId, force = false) {
   client.on('authenticated', () => {
     db.setWa(businessId, 'AUTHENTICATED', 'WhatsApp authenticated. Opening session…', null)
       .catch(console.error);
+    finishStartup('authenticated');
   });
 
   client.on('ready', () => {
@@ -231,6 +249,7 @@ async function startBusiness(businessId, force = false) {
     retries.delete(businessId);
     db.setWa(businessId, 'CONNECTED', 'WhatsApp is connected.', null).catch(console.error);
     console.log('WhatsApp ready for business', businessId);
+    finishStartup('ready');
   });
 
   client.on('auth_failure', message => {
@@ -238,6 +257,7 @@ async function startBusiness(businessId, force = false) {
     starting.delete(businessId);
     db.setWa(businessId, 'AUTH_FAILURE', String(message), null).catch(console.error);
     console.error('WhatsApp authentication failed for business', businessId, message);
+    finishStartup('auth-failure');
   });
 
   client.on('change_state', state => {
@@ -264,6 +284,7 @@ async function startBusiness(businessId, force = false) {
 
     // A manual reconnect already starts the replacement client. Do not start
     // another one from the old client's disconnected event.
+    finishStartup(manual ? 'manual-disconnect' : 'disconnected');
     if (!manual && generations.get(businessId) === generation) scheduleRestart(businessId, generation);
   });
 
@@ -352,6 +373,7 @@ async function startBusiness(businessId, force = false) {
       const shown = launchFailure ? msg + '\n\n' + browserDependenciesHint() : msg;
       await db.setWa(businessId, 'ERROR', shown, null).catch(() => {});
       console.error('WhatsApp initialization failed for business', businessId, shown);
+      finishStartup('init-error');
       if (launchFailure) scheduleRestart(businessId, generation, 15000);
     }
   };
@@ -360,8 +382,11 @@ async function startBusiness(businessId, force = false) {
     starting.delete(businessId);
     if (clients.get(businessId) === client) clients.delete(businessId);
     await db.setWa(businessId, 'ERROR', String(e?.message || e), null).catch(() => {});
+    finishStartup('init-error');
     console.error('WhatsApp initialization error:', e);
   });
+
+  return startupPromise;
 }
 
 async function startAll() {
@@ -373,10 +398,15 @@ async function startAll() {
   // "Target closed" / "Failed to launch the browser process" and endless QR loops.
   for (const business of rows) {
     try {
-      await startBusiness(business.id);
+      const milestone = await startBusiness(business.id);
+      console.log('WhatsApp startup milestone for business', business.id, milestone || 'already-running');
     } catch (e) {
       console.error('WhatsApp startup failed for business', business.id, e.message);
     }
+
+    // Leave a small gap after each Chromium launch. This is deliberately
+    // sequential because Codespaces can kill one Chromium target when several
+    // WhatsApp Web sessions start together.
     await new Promise(resolve => setTimeout(resolve, 8000));
   }
 }
