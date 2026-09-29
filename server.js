@@ -1,5 +1,5 @@
 require('dotenv').config();
-const express=require('express'); const path=require('path'); const crypto=require('crypto'); const fs=require('fs'); const multer=require('multer'); const pdfParse=require('pdf-parse'); const Tesseract=require('tesseract.js'); const PDFDocument=require('pdfkit'); const {execFile}=require('child_process'); const db=require('./platform-db');
+const express=require('express'); const path=require('path'); const crypto=require('crypto'); const multer=require('multer'); const pdfParse=require('pdf-parse'); const Tesseract=require('tesseract.js'); const PDFDocument=require('pdfkit'); const db=require('./platform-db');
 const app=express(); const PORT=Number(process.env.PORT)||3000; const PUBLIC=path.join(__dirname,'public');
 app.use(express.json({limit:'3mb'})); app.use(express.urlencoded({extended:true})); app.use(express.static(PUBLIC));
 function cookieToken(req){const m=String(req.headers.cookie||'').match(/(?:^|;)\s*dm_token=([^;]+)/);return m?decodeURIComponent(m[1]):''}
@@ -8,7 +8,15 @@ function csrf(req,res,next){if(['GET','HEAD','OPTIONS'].includes(req.method))ret
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:12*1024*1024},fileFilter:(r,f,cb)=>cb(null,['application/pdf','image/jpeg','image/png','image/webp'].includes(f.mimetype))});
 function hash(buf){return crypto.createHash('sha256').update(buf).digest('hex')}
 async function ocrImage(buf){const r=await Tesseract.recognize(buf,'eng',{logger:x=>{if(x.status==='recognizing text'&&Math.round((x.progress||0)*100)%20===0)console.log('OCR',Math.round((x.progress||0)*100)+'%')}});return r.data.text||''}
-function pdfToPng(buf){return new Promise((resolve,reject)=>{const dir=path.join(__dirname,'data','ocr');fs.mkdirSync(dir,{recursive:true});const base=path.join(dir,'scan-'+Date.now());const pdf=base+'.pdf';fs.writeFileSync(pdf,buf);execFile('pdftoppm',['-png','-f','1','-singlefile','-r','180',pdf,base],async e=>{try{fs.rmSync(pdf,{force:true});if(e)throw e;const p=base+'.png';const b=fs.readFileSync(p);fs.rmSync(p,{force:true});resolve(b)}catch(x){reject(x)}})})}
+async function pdfToPng(buf){
+  const parser=new pdfParse.PDFParse({data:buf});
+  try{
+    const result=await parser.getScreenshot({first:1,desiredWidth:1800,imageBuffer:true,imageDataUrl:false});
+    const page=result&&result.pages&&result.pages[0];
+    if(!page||!page.data)throw new Error('PDF screenshot rendering returned no image');
+    return Buffer.from(page.data);
+  }finally{try{await parser.destroy()}catch{}}
+}
 async function extractPdfText(buf){
   // Support both pdf-parse v2 and the older v1 API during upgrades.
   if(pdfParse&&typeof pdfParse.PDFParse==='function'){
@@ -30,118 +38,7 @@ async function extractText(file){
   if(file.mimetype!=='application/pdf')return ocrImage(file.buffer);
   try{return await extractPdfText(file.buffer)}catch(e){console.error('PDF text extraction failed:',e.message);return ''}
 }
-function cleanLines(t){return String(t||'').split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean)}
-function firstMatch(lines,patterns){for(const l of lines)for(const p of patterns){const m=l.match(p);if(m)return m[1].trim()}return ''}
-function num(v){return Number(String(v||'').replace(/,/g,''))||0}
-function afterLabel(lines,label){const re=new RegExp('^\\s*'+label+'\\s*[:\\-]?\\s*(.+)$','i');for(const l of lines){const m=l.match(re);if(m)return m[1].trim()}return ''}
-function findAllGst(text){return [...String(text||'').matchAll(/\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9][Z][A-Z0-9]\\b/gi)].map(x=>x[0].toUpperCase())}
-function findPan(text){return (String(text||'').match(/\b[A-Z]{5}[0-9]{4}[A-Z]\\b/i)||[])[0]||''}
-function skuFromBill(name,hsn){return db.makeSku(name,hsn)}
-function parseBill(text){
-  const lines=cleanLines(text);
-  const raw=String(text||'');
-  const flat=raw.replace(/\r?\n/g,' ').replace(/\s+/g,' ').trim();
-  const gstins=findAllGst(raw), pan=findPan(raw);
-
-  const find=(re)=>{for(const l of lines){const m=l.match(re);if(m)return String(m[1]||'').trim()}const m=flat.match(re);return m?String(m[1]||'').trim():''};
-  const money=(re)=>{
-    const l=lines.find(x=>re.test(x))||((re.test(flat))?flat:'');
-    const vals=[...l.matchAll(/(?:₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d+)?)/gi)].map(m=>num(m[1]));
-    return vals.length?vals[vals.length-1]:0;
-  };
-
-  let invoiceNo=find(/Invoice\s*(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9\/\-]+)(?=\s|$)/i).replace(/Invoice$/i,'');
-  const invoiceDate=find(/Invoice\s*Date\s*[:\-]?\s*([0-9A-Za-z\/\-]+)/i);
-  const challanNumber=find(/Challan\s*No\.?\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
-  const challanDate=find(/Challan\s*Date\s*[:\-]?\s*([0-9A-Za-z\/\-]+)/i);
-  const eway=find(/E[- ]?Way\s*Bill\s*No\.?\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
-  const transport=find(/^Transport\s+(.+)/i);
-  const transportId=find(/Transport\s*ID\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
-  const pos=find(/Place\s*of\s*Supply\s*[:\-]?\s*(.+?)(?=\s+Invoice\s*No|$)/i);
-  const moneyAny=(re)=>{
-    const m=raw.match(new RegExp(re.source+'[^0-9₹]*([\\d,]+(?:\\.\\d+)?)',re.flags.replace('g','i')));
-    return m?num(m[1]):0;
-  };
-  const invoiceTotal=money(/Total Amount After Tax/i)||moneyAny(/Total Amount After Tax/i);
-  const taxableTotal=money(/^Taxable Amount\s/i)||moneyAny(/Taxable Amount/i);
-  const taxTotal=money(/^Total Tax\s/i)||moneyAny(/Total Tax/i);
-  const igst=money(/^(?:Add\s*:\s*)?IGST\s/i)||moneyAny(/(?:Add\s*:\s*)?IGST/i);
-  const cgst=money(/^CGST\s/i)||moneyAny(/CGST/i), sgst=money(/^SGST\s/i)||moneyAny(/SGST/i);
-
-  const customerIdx=lines.findIndex(l=>/Customer Detail/i.test(l));
-  let buyerName=find(/^M\/S\.?\s+(.+)/i);
-  if(!buyerName&&customerIdx>=0)buyerName=lines[customerIdx+1]||'';
-  let buyerGstin='';
-  if(customerIdx>=0){
-    for(let j=customerIdx;j<Math.min(lines.length,customerIdx+25);j++){
-      const m=lines[j].match(/\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9])\b/i);
-      if(m){buyerGstin=m[1].toUpperCase();break}
-    }
-  }
-  if(!buyerGstin&&gstins.length)buyerGstin=gstins[0];
-  const buyerPan=buyerGstin?buyerGstin.slice(2,12):'';
-
-  let sellerName=find(/^For\s+(.+)/i);
-  if(!sellerName){
-    const candidates=lines.slice(0,Math.max(0,customerIdx));
-    sellerName=candidates.find(x=>x&&!/^PAN\b|^TAX INVOICE\b|^ORIGINAL\b/i.test(x)&&!/Customer Detail/i.test(x))||'';
-  }
-  const sellerGstin=gstins.length>1?gstins[gstins.length-1]:'';
-  const sellerAddress='';
-  const sellerPan=pan&&pan!==buyerPan?pan:'';
-
-  const items=[];
-  const seen=new Set();
-  const addItem=(name,hsn,q,unit,rate,taxable,gstRate,taxAmount,lineTotal)=>{
-    name=String(name||'').replace(/\s+/g,' ').trim();
-    hsn=String(hsn||'').trim();
-    if(!name||!hsn||!(q>0)||!(rate>0))return;
-    if(/^(total|taxable amount|tax|invoice|amount|grand total)$/i.test(name))return;
-    const key=[name.toLowerCase(),hsn,q,rate].join('|');
-    if(seen.has(key))return;
-    seen.add(key);
-    items.push({
-      name,supplier_sku:'',sku:skuFromBill(name,hsn),hsn_code:hsn,quantity:q,
-      unit:String(unit||'PCS').toUpperCase(),purchase_price:rate,gst_rate:Number(gstRate||0),
-      taxable_value:taxable||money(q*rate),tax_amount:taxAmount||0,
-      line_total:lineTotal||money((taxable||money(q*rate))+(taxAmount||0))
-    });
-  };
-
-  // Deterministic parser for the supplier's product table.
-  // Work on the flattened text AFTER "Name of Product / Service", so
-  // customer/header fields can never become part of a product name.
-  const headerPos=flat.search(/Name\s+of\s+Product\s*\/\s*Service/i);
-  const tableFlat=headerPos>=0?flat.slice(headerPos):flat;
-  const rowRe=/(?:^|\s)(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Za-z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?=\s+\d+[.)]?\s|\s+Total\b|\s+Total\s+in\s+words\b|$)/gi;
-  let row;
-  while((row=rowRe.exec(tableFlat))){
-    const name=row[2].replace(/\s+/g,' ').trim();
-    // Do not accept table labels or totals as products.
-    if(/^(?:No\.?|Name\s+of\s+Product|Product|Service|Total|Taxable|Amount|IGST|CGST|SGST)/i.test(name))continue;
-    addItem(name,row[3],num(row[4]),row[5],num(row[6]),num(row[7]),num(row[8]),num(row[9]),num(row[10]));
-  }
-
-  // Last-resort parser for a PDF where the table loses serial-number
-  // boundaries but retains the HSN/qty/unit/rate sequence.
-  if(!items.length){
-    const hsnRowRe=/(?:^|\s)([A-Za-z][A-Za-z0-9 &().\/-]{2,120}?)\s+(\d{3,8})\s+(\d+(?:[,.]\d+)?)\s+([A-Za-z]{2,10})\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:[,.]\d+)?)\s+(\d+(?:[,.]\d+)?)(?=\s+\d+\s+|\s+Total\b|$)/gi;
-    let hr;
-    while((hr=hsnRowRe.exec(tableFlat))){
-      addItem(hr[1],hr[2],num(hr[3]),hr[4],num(hr[5]),num(hr[6]),num(hr[7]),num(hr[8]),num(hr[9]));
-    }
-  }
-  return {
-    supplier_name:sellerName,supplier_gstin:sellerGstin,supplier_address:sellerAddress,
-    buyer_name:buyerName,buyer_gstin:buyerGstin,buyer_pan:buyerPan,seller_pan:sellerPan,
-    seller_phone:'',seller_address:sellerAddress,seller_state:'',seller_state_code:'',
-    seller_id:sellerGstin||sellerPan||sellerName,buyer_id:buyerGstin||buyerPan||buyerName,
-    invoice_number:invoiceNo,invoice_date:invoiceDate,place_of_supply:pos,
-    challan_number:challanNumber,challan_date:challanDate,eway_bill_number:eway,
-    transport,transport_id:transportId,taxable_total:taxableTotal,tax_total:taxTotal,
-    cgst,sgst,igst,invoice_total:invoiceTotal,items,raw_text:text
-  };
-}
+const {parseBill}=require('./purchase-parser');
 function words(n){n=Math.round(Number(n)||0);const a=['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'],b=['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];function x(v){if(v<20)return a[v];if(v<100)return b[Math.floor(v/10)]+' '+a[v%10];if(v<1000)return a[Math.floor(v/100)]+' Hundred '+x(v%100);if(v<100000)return x(Math.floor(v/1000))+' Thousand '+x(v%1000);if(v<10000000)return x(Math.floor(v/100000))+' Lakh '+x(v%100000);return x(Math.floor(v/10000000))+' Crore '+x(v%10000000)}return (x(n).replace(/\s+/g,' ').trim()||'Zero')+' Rupees Only'}
 function pdfInvoice(res,title,biz,inv){
   const doc=new PDFDocument({size:'A4',margin:32});
