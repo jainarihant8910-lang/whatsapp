@@ -374,11 +374,11 @@ async function startBusiness(businessId, force = false) {
       if (stockLines.length === 2 && stockLines[0].toLowerCase() === 'stock') {
         const stockMessageId = message.id?._serialized || message.id?.$1 || message.id?.id || '';
         if (stockMessageId) {
-          const already = await db.get('SELECT 1 FROM processed_messages WHERE business_id=? AND message_id=?',[businessId,stockMessageId]);
-          if (already) return;
-          await db.run('INSERT OR IGNORE INTO processed_messages(business_id,message_id,whatsapp_from,sender_phone,body) VALUES(?,?,?,?,?)',[businessId,stockMessageId,from,'','[STOCK QUERY]']);
-          const claimed = await db.get('SELECT 1 FROM processed_messages WHERE business_id=? AND message_id=?',[businessId,stockMessageId]);
-          if (!claimed) return;
+          const claim = await db.run(
+            'INSERT OR IGNORE INTO processed_messages(business_id,message_id,whatsapp_from,sender_phone,body) VALUES(?,?,?,?,?)',
+            [businessId,stockMessageId,from,'','[STOCK QUERY]']
+          );
+          if (Number(claim.changes||0)!==1) return;
         }
         const productName = stockLines[1];
         const product = await db.get(
@@ -472,7 +472,9 @@ async function startBusiness(businessId, force = false) {
 
       await db.setWa(businessId, 'CONNECTED', 'Last order received: #' + order.id + ' from ' + senderPhone, null).catch(() => {});
 
-      if (order.confirmation_sent) return;
+      if (Number(order.confirmation_sent||0)===1) return;
+      const confirmationClaimed=await db.claimConfirmation(businessId,order.id);
+      if (!confirmationClaimed) return;
 
       const reply =
         'Order #' + order.id + ' ' +
