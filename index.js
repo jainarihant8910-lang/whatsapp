@@ -5,6 +5,7 @@ const db = require('./platform-db');
 const path = require('path');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
+const { execFile } = require('child_process');
 
 const AUTH_ROOT = path.join(__dirname, '.wwebjs_auth');
 const clients = new Map();
@@ -12,6 +13,24 @@ const starting = new Set();
 const retries = new Map();
 const generations = new Map();
 const manualStops = new WeakSet();
+const restartTimers = new Map();
+
+const CHROME_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  '--disable-software-rasterizer',
+  '--no-zygote',
+  '--disable-extensions',
+  '--disable-background-networking',
+  '--disable-features=Translate,BackForwardCache',
+  '--window-size=1280,900'
+];
+
+function browserDependenciesHint() {
+  return 'Chromium could not start. In Codespaces, run: npx puppeteer browsers install chrome --install-deps';
+}
 
 function profilePath(businessId) {
   return path.join(AUTH_ROOT, 'session-business-' + businessId);
@@ -117,6 +136,16 @@ async function phone(message, client, businessId) {
   return null;
 }
 
+function scheduleRestart(businessId, generation, delay = 5000) {
+  if (restartTimers.has(businessId)) return;
+  const timer = setTimeout(async () => {
+    restartTimers.delete(businessId);
+    if (generations.get(businessId) !== generation || clients.has(businessId) || starting.has(businessId)) return;
+    try { await startBusiness(businessId); } catch (e) { console.error('WhatsApp automatic restart failed for business', businessId, e.message); }
+  }, delay);
+  restartTimers.set(businessId, timer);
+}
+
 async function startBusiness(businessId, force = false) {
   await db.ready;
 
@@ -132,6 +161,8 @@ async function startBusiness(businessId, force = false) {
     }
     starting.delete(businessId);
     retries.delete(businessId);
+    const timer = restartTimers.get(businessId);
+    if (timer) { clearTimeout(timer); restartTimers.delete(businessId); }
   }
 
   const generation = (generations.get(businessId) || 0) + 1;
@@ -149,14 +180,10 @@ async function startBusiness(businessId, force = false) {
       dataPath: AUTH_ROOT
     }),
     puppeteer: {
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-zygote'
-      ],
-      protocolTimeout: 120000
+      headless: true,
+      dumpio: false,
+      args: CHROME_ARGS,
+      protocolTimeout: 180000
     },
     qrMaxRetries: 10
   });
@@ -189,6 +216,7 @@ async function startBusiness(businessId, force = false) {
     if (generations.get(businessId) !== generation) return;
     if (/Target closed|Protocol error|browser process/i.test(message)) {
       db.setWa(businessId, 'DISCONNECTED', 'WhatsApp browser stopped. Reconnecting…', null).catch(() => {});
+      scheduleRestart(businessId, generation);
     }
   });
 
@@ -236,13 +264,7 @@ async function startBusiness(businessId, force = false) {
 
     // A manual reconnect already starts the replacement client. Do not start
     // another one from the old client's disconnected event.
-    if (!manual && generations.get(businessId) === generation) {
-      setTimeout(() => {
-        if (generations.get(businessId) === generation && !clients.has(businessId)) {
-          startBusiness(businessId).catch(console.error);
-        }
-      }, 5000);
-    }
+    if (!manual && generations.get(businessId) === generation) scheduleRestart(businessId, generation);
   });
 
   client.on('message', async message => {
@@ -311,6 +333,7 @@ async function startBusiness(businessId, force = false) {
       retries.delete(businessId);
     } catch (e) {
       const msg = String(e?.message || e);
+      const launchFailure = /Failed to launch the browser process|Could not find expected browser|ENOENT|libatk|libnss|libgbm|Target closed/i.test(msg);
       const conflict = /already running|userDataDir|user data directory|Singleton/i.test(msg);
 
       try { await client.destroy(); } catch {}
@@ -326,8 +349,10 @@ async function startBusiness(businessId, force = false) {
       }
 
       starting.delete(businessId);
-      await db.setWa(businessId, 'ERROR', msg, null).catch(() => {});
-      console.error('WhatsApp initialization failed for business', businessId, msg);
+      const shown = launchFailure ? msg + '\n\n' + browserDependenciesHint() : msg;
+      await db.setWa(businessId, 'ERROR', shown, null).catch(() => {});
+      console.error('WhatsApp initialization failed for business', businessId, shown);
+      if (launchFailure) scheduleRestart(businessId, generation, 15000);
     }
   };
 
