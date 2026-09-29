@@ -24,11 +24,15 @@ async function openReturnPicker(){
   try{
     const d=await api('/api/orders');
     const list=(d.orders||[]).filter(o=>['SUCCESS','PARTIAL','PARTIAL_RETURN'].includes(o.status));
-    modal('Quick return portal',\`
-      <p class='muted'>Select a delivered order. You can return all or only part of any accepted item. Returned quantity is added back to stock and the server prevents returning more than the remaining delivered quantity.</p>
-      <label>Order<select id='returnOrderPick'>\${list.map(o=>\`<option value='\${o.id}'>#\${o.id} — \${esc(o.delivered_to)} — \${esc(o.date)} — \${esc(o.status)}</option>\`).join('')||'<option value="">No delivered orders available</option>'}</select></label>
-      <button id='openPickedReturn' class='primary'>Continue</button>\`);
-    $('openPickedReturn').onclick=()=>{const id=Number($('returnOrderPick').value);if(id)openReturn(id);else toast('No delivered orders available.',true)};
+    const options=list.map(o=>'<option value="'+o.id+'">#'+o.id+' — '+esc(o.delivered_to)+' — '+esc(o.date)+' — '+esc(o.status)+'</option>').join('');
+    modal('Quick return portal',
+      '<p class="muted">Select a delivered order. You can return all or only part of any accepted item. Returned quantity is added back to stock and the server prevents returning more than the remaining delivered quantity.</p>'+
+      '<label>Order<select id="returnOrderPick">'+(options||'<option value="">No delivered orders available</option>')+'</select></label>'+
+      '<button id="openPickedReturn" class="primary">Continue</button>');
+    $('openPickedReturn').onclick=()=>{
+      const id=Number($('returnOrderPick').value);
+      if(id)openReturn(id);else toast('No delivered orders available.',true);
+    };
   }catch(e){toast(e.message,true)}
 }
 
