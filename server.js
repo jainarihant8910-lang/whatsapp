@@ -19,86 +19,60 @@ function findPan(text){return (String(text||'').match(/\\b[A-Z]{5}[0-9]{4}[A-Z]\
 function skuFromBill(name,hsn){return db.makeSku(name,hsn)}
 function parseBill(text){
   const lines=cleanLines(text);
-  const upper=String(text||'').toUpperCase();
-  const gstins=findAllGst(text);
-  const pan=findPan(text);
-  const invoiceNo=firstMatch(lines,[/Invoice\s*(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9\/-]+)/i]);
-  const invoiceDate=firstMatch(lines,[/Invoice\s*Date\s*[:\-]?\s*([0-9A-Za-z\/-]+)/i]);
-  const challanNumber=firstMatch(lines,[/Challan\s*No\.?\s*[:\-]?\s*([A-Z0-9\/-]+)/i]);
-  const challanDate=firstMatch(lines,[/Challan\s*Date\s*[:\-]?\s*([0-9A-Za-z\/-]+)/i]);
-  const eway=firstMatch(lines,[/E[- ]?Way\s*Bill\s*No\.?\s*[:\-]?\s*([A-Z0-9\/-]+)/i]);
-  const transport=firstMatch(lines,[/^Transport\s+(.+)/i]);
-  const transportId=firstMatch(lines,[/Transport\s*ID\s*[:\-]?\s*([A-Z0-9\/-]+)/i]);
-  const pos=firstMatch(lines,[/Place\s*of\s*Supply\s*[:\-]?\s*(.+)/i]);
-  const totalLine=lines.find(l=>/Total Amount After Tax/i.test(l))||'';
-  const invoiceTotal=num((totalLine.match(/₹\s*([\d,]+(?:\.\d+)?)/i)||[])[1])||num(afterLabel(lines,'Total Amount After Tax'));
-  const taxableTotal=num((lines.find(l=>/^Taxable Amount\s/i.test(l))||'').match(/([\d,]+(?:\.\d+)?)/)?.[1]);
-  const taxTotal=num((lines.find(l=>/^Total Tax\s/i.test(l))||'').match(/([\d,]+(?:\.\d+)?)/)?.[1]);
-  const igst=num((lines.find(l=>/^(?:Add\s*:\s*)?IGST\s/i.test(l))||'').match(/([\d,]+(?:\.\d+)?)/)?.[1]);
-  const cgst=num((lines.find(l=>/^CGST\s/i.test(l))||'').match(/([\d,]+(?:\.\d+)?)/)?.[1]);
-  const sgst=num((lines.find(l=>/^SGST\s/i.test(l))||'').match(/([\d,]+(?:\.\d+)?)/)?.[1]);
-
-  let buyerName=firstMatch(lines,[/^M\/S\.?\s+(.+)/i]);
-  let buyerGstin='';
+  const raw=String(text||'');
+  const gstins=findAllGst(raw), pan=findPan(raw);
+  const find=(re)=>{for(const l of lines){const m=l.match(re);if(m)return m[1].trim()}return ''};
+  const money=(re)=>{const l=lines.find(x=>re.test(x))||'';const m=l.match(/([\d,]+(?:\.\d+)?)/);return m?num(m[1]):0};
+  const invoiceNo=find(/Invoice\s*(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9\/-]+)/i);
+  const invoiceDate=find(/Invoice\s*Date\s*[:\-]?\s*([0-9A-Za-z\/-]+)/i);
+  const challanNumber=find(/Challan\s*No\.?\s*[:\-]?\s*([A-Z0-9\/-]+)/i);
+  const challanDate=find(/Challan\s*Date\s*[:\-]?\s*([0-9A-Za-z\/-]+)/i);
+  const eway=find(/E[- ]?Way\s*Bill\s*No\.?\s*[:\-]?\s*([A-Z0-9\/-]+)/i);
+  const transport=find(/^Transport\s+(.+)/i), transportId=find(/Transport\s*ID\s*[:\-]?\s*([A-Z0-9\/-]+)/i);
+  const pos=find(/Place\s*of\s*Supply\s*[:\-]?\s*(.+)/i);
+  const invoiceTotal=money(/Total Amount After Tax/i), taxableTotal=money(/^Taxable Amount\s/i);
+  const taxTotal=money(/^Total Tax\s/i), igst=money(/^(?:Add\s*:\s*)?IGST\s/i);
+  const cgst=money(/^CGST\s/i), sgst=money(/^SGST\s/i);
   const customerIdx=lines.findIndex(l=>/Customer Detail/i.test(l));
-  if(customerIdx>=0){
-    for(let j=customerIdx;j<Math.min(lines.length,customerIdx+12);j++){
-      if(/GSTIN/i.test(lines[j])){buyerGstin=(lines[j].match(/([0-9A-Z]{15})/i)||[])[1]||'';break}
-    }
-  }
-  if(!buyerGstin&&gstins.length)buyerGstin=gstins[0];
+  let buyerName=find(/^M\/S\.?\s+(.+)/i);
+  if(!buyerName&&customerIdx>=0)buyerName=lines[customerIdx+1]||'';
+  let buyerGstin='';
+  if(customerIdx>=0)for(let j=customerIdx;j<Math.min(lines.length,customerIdx+15);j++){const m=lines[j].match(/\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9])\b/i);if(m){buyerGstin=m[1].toUpperCase();break}}
+  if(!buyerGstin)buyerGstin=gstins[0]||'';
   const buyerPan=buyerGstin?buyerGstin.slice(2,12):'';
-  const sellerName=firstMatch(lines,[/^For\s+(.+)/i])||firstMatch(lines,[/^(?!M\/S).*?([A-Z][A-Za-z &]+(?:Tools|Industries|Enterprises|Traders|Engineering|Suppliers|Company))$/i])||'';
-  const sellerPan=pan;
+  const sellerName=find(/^For\s+(.+)/i);
   const sellerGstin=gstins.length>1?gstins[gstins.length-1]:'';
-  const customerAddress=customerIdx>=0?cleanLines(lines.slice(customerIdx+1,Math.min(lines.length,customerIdx+8)).filter(x=>!/^(Phone|GSTIN|Place of Supply)/i.test(x)).join(', ')):'';
-  const phone=firstMatch(lines,[/Phone\s*[:\-]?\s*(\+?\d[\d -]{7,})/i]);
+  const supplierAddress=customerIdx>0?lines.slice(Math.max(0,customerIdx-6),customerIdx).filter(x=>!/^PAN|TAX INVOICE|ORIGINAL/i.test(x)).join(', '):'';
   const items=[];
-  const itemRegex=/^\s*\d+[.)]?\s+(.+?)\s+(\d{3,8})\s+(\d+(?:\.\d+)?)\s+([A-Z]+)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s*$/i;
-  for(const l of lines){
-    const m=l.match(itemRegex);
-    if(!m)continue;
-    const [,name,hsn,quantity,unit,rate,taxable,gstRate,taxAmount,lineTotal]=m;
-    if(/total|amount|taxable|invoice/i.test(name))continue;
-    items.push({name:name.trim(),supplier_sku:'',sku:skuFromBill(name,hsn),hsn_code:hsn,quantity:Number(quantity),unit:unit.toUpperCase(),purchase_price:num(rate),gst_rate:Number(gstRate),taxable_value:num(taxable),tax_amount:num(taxAmount),line_total:num(lineTotal)});
+  for(let i=0;i<lines.length;i++){
+    const head=lines[i].match(/^\s*(\d+)[.)]?\s+(.+)$/);
+    if(!head||/^(?:total|taxable amount|tax|invoice)/i.test(head[2]))continue;
+    let name=head[2],hsn='',quantity=0,unit='PCS',rate=0,taxable=0,gstRate=0,taxAmount=0,lineTotal=0;
+    const nameParts=[name];
+    for(let j=i+1;j<Math.min(lines.length,i+14);j++){
+      const l=lines[j];
+      if(/^\s*\d+[.)]?\s+/.test(l)||/^Total(?:\s|$)/i.test(l))break;
+      if(!hsn&&/^\d{3,8}$/.test(l)){hsn=l;continue}
+      let m=l.match(/^([\d,.]+)\s+([A-Z]{2,8})$/i);
+      if(!quantity&&m){quantity=num(m[1]);unit=m[2].toUpperCase();continue}
+      if(!quantity&&(m=l.match(/^([\d,.]+)\s+(NOS|PCS|PC|BOX|SET|KG|G|LTR|M|PACK)$/i))){quantity=num(m[1]);unit=m[2].toUpperCase();continue}
+      if(!rate&&/^\d[\d,]*(?:\.\d+)?$/.test(l)){rate=num(l);continue}
+      if(rate&&!taxable&&/^\d[\d,]*(?:\.\d+)?$/.test(l)){taxable=num(l);continue}
+      if(taxable&&!gstRate&&/^\d+(?:\.\d+)?$/.test(l)){gstRate=num(l);continue}
+      if(gstRate&&!taxAmount&&/^\d[\d,]*(?:\.\d+)?$/.test(l)){taxAmount=num(l);continue}
+      if(taxAmount&&!lineTotal&&/^\d[\d,]*(?:\.\d+)?$/.test(l)){lineTotal=num(l);break}
+      if(nameParts.length<4&&!/^\d/.test(l))nameParts.push(l);
+    }
+    if(hsn&&quantity>0&&rate>0){
+      name=nameParts.join(' ').replace(/\s+/g,' ').trim();
+      items.push({name,supplier_sku:'',sku:skuFromBill(name,hsn),hsn_code:hsn,quantity,unit,purchase_price:rate,gst_rate:gstRate,taxable_value:taxable||rate*quantity,tax_amount:taxAmount,line_total:lineTotal||((taxable||rate*quantity)+taxAmount)});
+    }
   }
   if(!items.length){
-    // More tolerant fallback: detect lines containing HSN + quantity + rate and use trailing monetary columns.
-    for(const l of lines){
-      const m=l.match(/^\s*(?:\d+[.)]?\s+)?(.+?)\s+(\d{3,8})\s+(\d+(?:\.\d+)?)\s*(NOS|PCS|PC|BOX|SET|KG|LTR|M|PACK)?\s+([\d,]+(?:\.\d+)?)(?:\s+([\d,]+(?:\.\d+)?))?(?:\s+(\d+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?))?(?:\s+([\d,]+(?:\.\d+)?))?$/i);
-      if(m&&!/total|amount|tax/i.test(m[1])){const rate=num(m[5]),taxable=num(m[6]||m[5]),gr=num(m[7]||0),ta=num(m[8]||0),lt=num(m[9]||taxable+ta);items.push({name:m[1].trim(),supplier_sku:'',sku:skuFromBill(m[1],m[2]),hsn_code:m[2],quantity:num(m[3]),unit:(m[4]||'PCS').toUpperCase(),purchase_price:rate,gst_rate:gr,taxable_value:taxable,tax_amount:ta,line_total:lt})}
-    }
+    const re=/^\s*\d+[.)]?\s+(.+?)\s+(\d{3,8})\s+(\d+(?:\.\d+)?)\s+([A-Z]+)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s*$/i;
+    for(const l of lines){const m=l.match(re);if(m){const [,name,hsn,q,u,r,t,g,ta,lt]=m;if(!/total|amount|taxable|invoice/i.test(name))items.push({name:name.trim(),supplier_sku:'',sku:skuFromBill(name,hsn),hsn_code:hsn,quantity:num(q),unit:u.toUpperCase(),purchase_price:num(r),gst_rate:num(g),taxable_value:num(t),tax_amount:num(ta),line_total:num(lt)})}}
   }
-  const supplierAddress=customerIdx>0?cleanLines(lines.slice(Math.max(0,customerIdx-6),customerIdx).filter(x=>!/^PAN|TAX INVOICE|ORIGINAL|Manufacturing|Web|Tel/i.test(x)).join(', ')):'';
-  return {
-    supplier_name:sellerName,
-    supplier_gstin:sellerGstin,
-    supplier_address:supplierAddress,
-    buyer_name:buyerName,
-    buyer_gstin:buyerGstin,
-    buyer_pan:buyerPan,
-    seller_pan:sellerPan,
-    seller_phone:'',
-    seller_address:supplierAddress,
-    seller_state:'',
-    seller_state_code:'',
-    seller_id:sellerGstin||sellerPan||sellerName,
-    buyer_id:buyerGstin||buyerPan||buyerName,
-    invoice_number:invoiceNo,
-    invoice_date:invoiceDate,
-    place_of_supply:pos,
-    challan_number:challanNumber,
-    challan_date:challanDate,
-    eway_bill_number:eway,
-    transport,
-    transport_id:transportId,
-    taxable_total:taxableTotal,
-    tax_total:taxTotal,
-    cgst,sgst,igst,
-    invoice_total:invoiceTotal,
-    items,
-    raw_text:text
-  };
+  return {supplier_name:sellerName,supplier_gstin:sellerGstin,supplier_address:supplierAddress,buyer_name:buyerName,buyer_gstin:buyerGstin,buyer_pan:buyerPan,seller_pan:pan,seller_phone:'',seller_address:supplierAddress,seller_state:'',seller_state_code:'',seller_id:sellerGstin||pan||sellerName,buyer_id:buyerGstin||buyerPan||buyerName,invoice_number:invoiceNo,invoice_date:invoiceDate,place_of_supply:pos,challan_number:challanNumber,challan_date:challanDate,eway_bill_number:eway,transport,transport_id:transportId,taxable_total:taxableTotal,tax_total:taxTotal,cgst,sgst,igst,invoice_total:invoiceTotal,items,raw_text:text};
 }
 function words(n){n=Math.round(Number(n)||0);const a=['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'],b=['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];function x(v){if(v<20)return a[v];if(v<100)return b[Math.floor(v/10)]+' '+a[v%10];if(v<1000)return a[Math.floor(v/100)]+' Hundred '+x(v%100);if(v<100000)return x(Math.floor(v/1000))+' Thousand '+x(v%1000);if(v<10000000)return x(Math.floor(v/100000))+' Lakh '+x(v%100000);return x(Math.floor(v/10000000))+' Crore '+x(v%10000000)}return (x(n).replace(/\s+/g,' ').trim()||'Zero')+' Rupees Only'}
 function pdfInvoice(res,title,biz,inv){
@@ -229,7 +203,7 @@ app.post('/api/invoices',async(r,s)=>{try{s.status(201).json({invoice:await db.c
 app.get('/api/invoices/:id/pdf',async(r,s)=>{const i=await db.invoice(r.businessId,Number(r.params.id)),b=await db.business(r.businessId);if(!i)return s.status(404).end();pdfInvoice(s,'invoice-'+i.invoice_no,b,i)});
 app.get('/api/orders/:id/invoice-pdf',async(r,s)=>{const o=await db.order(r.businessId,Number(r.params.id)),b=await db.business(r.businessId);if(!o)return s.status(404).end();const cust=await db.findCustomerByName(r.businessId,o.delivered_to);const tax=o.items.reduce((a,x)=>a+Number(x.total_tax||0),0);const same=!!(b.state_code&&cust?.state_code&&b.state_code===cust.state_code);const inv={invoice_no:(b.invoice_prefix||'INV')+'-ORDER-'+String(o.id).padStart(4,'0'),invoice_date:o.date,customer_name:o.delivered_to,customer_address:cust?.address||'',customer_phone:cust?.phone||'',customer_gstin:cust?.gstin||'',place_of_supply:cust?.state?(cust.state+' '+(cust.state_code||'')): '',challan_no:'',challan_date:'',eway_bill_no:'',transport:'',subtotal:o.items.reduce((a,x)=>a+Number(x.taxable_value||0),0),cgst:same?tax/2:0,sgst:same?tax/2:0,igst:same?0:tax,total:o.items.reduce((a,x)=>a+Number(x.line_total||0),0),items:o.items};pdfInvoice(s,'invoice-order-'+o.id,b,inv)});
 app.get('/api/purchases',async(r,s)=>s.json({purchases:await db.purchaseBills(r.businessId)})); app.get('/api/purchases/:id',async(r,s)=>s.json({purchase:await db.purchase(r.businessId,Number(r.params.id))}));
-app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{try{if(!r.file)return s.status(400).json({error:'Upload a PDF or image'});const text=await extractText(r.file),parsed=parseBill(text);if(!parsed.items.length)return s.status(400).json({error:'Could not extract any product rows. Upload a clearer bill PDF/image.'});const existing=await db.get('SELECT id FROM purchase_bills WHERE business_id=? AND file_hash=?',[r.businessId,hash(r.file.buffer)]);if(existing)return s.status(409).json({error:'This bill file was already uploaded',purchase_id:existing.id});const id=await db.createPurchase(r.businessId,{original_filename:r.file.originalname,file_type:r.file.mimetype,file_hash:hash(r.file.buffer),...parsed});for(const x of parsed.items)await db.addPurchaseItem(r.businessId,id,x);s.json({success:true,purchase:await db.purchase(r.businessId,id),extracted:parsed})}catch(e){console.error('Purchase extraction error:',e);s.status(400).json({error:e.message})}});
+app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{try{if(!r.file)return s.status(400).json({error:'Upload a PDF or image'});const text=await extractText(r.file),parsed=parseBill(text);if(!parsed.items.length)return s.status(422).json({error:'The bill was readable, but no product rows could be identified. The extraction format was not recognized.'});const existing=await db.get('SELECT id FROM purchase_bills WHERE business_id=? AND file_hash=?',[r.businessId,hash(r.file.buffer)]);if(existing)return s.status(409).json({error:'This bill file was already uploaded',purchase_id:existing.id});const id=await db.createPurchase(r.businessId,{original_filename:r.file.originalname,file_type:r.file.mimetype,file_hash:hash(r.file.buffer),...parsed});for(const x of parsed.items)await db.addPurchaseItem(r.businessId,id,x);s.json({success:true,purchase:await db.purchase(r.businessId,id),extracted:parsed})}catch(e){console.error('Purchase extraction error:',e);s.status(400).json({error:e.message})}});
 app.post('/api/purchases/:id/confirm',async(r,s)=>{try{s.json({purchase:await db.confirmPurchase(r.businessId,Number(r.params.id),r.body.items||[])})}catch(e){s.status(400).json({error:e.message})}});
 app.get('/api/whatsapp/status',async(r,s)=>{try{s.json({status:await db.waStatus(r.businessId)})}catch(e){s.status(500).json({error:e.message})}}); app.post('/api/whatsapp/restart',async(r,s)=>{try{const worker=require('./index');await worker.startBusiness(r.businessId,true);s.json({success:true})}catch(e){s.status(400).json({error:e.message})}});
 app.get('/api/settings',async(r,s)=>s.json({business:await db.business(r.businessId)})); app.put('/api/settings',async(r,s)=>s.json({business:await db.updateBusiness(r.businessId,r.body)}));
