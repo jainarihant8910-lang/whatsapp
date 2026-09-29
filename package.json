@@ -10,7 +10,8 @@
     "test": "node smoke-test.js",
     "test:qr": "node qr-stress-test.js",
     "test:all": "npm run check && npm run test:parser && npm test && npm run test:qr",
-    "test:parser": "node purchase-parser.test.js"
+    "test:parser": "node purchase-parser.test.js",
+    "test:soak": "node soak-test.js"
   },
   "engines": {
     "node": ">=22"
