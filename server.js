@@ -7,7 +7,17 @@ async function auth(req,res,next){try{const s=await db.session(cookieToken(req))
 function csrf(req,res,next){if(['GET','HEAD','OPTIONS'].includes(req.method))return next();const c=String(req.headers['x-csrf-token']||'');if(!c)return res.status(403).json({error:'CSRF token missing'});db.get('SELECT csrf_hash FROM sessions WHERE token_hash=?',[crypto.createHash('sha256').update(cookieToken(req)).digest('hex')]).then(s=>{if(!s||s.csrf_hash!==crypto.createHash('sha256').update(c).digest('hex'))return res.status(403).json({error:'Invalid CSRF token'});next()}).catch(e=>res.status(500).json({error:e.message}))}
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:12*1024*1024},fileFilter:(r,f,cb)=>cb(null,['application/pdf','image/jpeg','image/png','image/webp'].includes(f.mimetype))});
 function hash(buf){return crypto.createHash('sha256').update(buf).digest('hex')}
-async function ocrImage(buf){const r=await Tesseract.recognize(buf,'eng',{logger:x=>{if(x.status==='recognizing text'&&Math.round((x.progress||0)*100)%20===0)console.log('OCR',Math.round((x.progress||0)*100)+'%')}});return r.data.text||''}
+async function ocrImage(buf){
+  const opts={logger:x=>{if(x.status==='recognizing text'&&Math.round((x.progress||0)*100)%20===0)console.log('OCR',Math.round((x.progress||0)*100)+'%')}};
+  // PSM 4 works better for invoice tables whose columns are visually separated.
+  try{
+    const r=await Tesseract.recognize(buf,'eng',{...opts,tessedit_pageseg_mode:'4'});
+    return r.data.text||'';
+  }catch(e){
+    const r=await Tesseract.recognize(buf,'eng',opts);
+    return r.data.text||'';
+  }
+}
 async function pdfToPng(buf){
   const parser=new pdfParse.PDFParse({data:buf});
   try{
