@@ -161,6 +161,7 @@ async function phone(message, client, businessId) {
     try {
       const result = await client.getContactLidAndPhone([from]);
       const raw = result?.[0]?.pn || '';
+      console.log('Resolved WhatsApp LID', lid, 'to phone', raw || '(not available)');
       const p = db.normalizePhone(String(raw).replace(/@c\.us$/i, ''));
       if (p) {
         await db.saveLid(businessId, lid, p);
@@ -396,6 +397,7 @@ async function startBusiness(businessId, force = false) {
       }
 
       const allowed = await db.sender(businessId, senderPhone);
+      console.log('WhatsApp sender resolved:', senderPhone, 'allowed:', !!allowed);
       if (!allowed) {
         await db.setWa(businessId, 'CONNECTED', 'Message received from an unapproved number. No order was created.', null).catch(() => {});
         console.log('WhatsApp message ignored: sender not allowed', senderPhone);
@@ -445,11 +447,21 @@ async function startBusiness(businessId, force = false) {
         const quotedId = whatsappMessageId;
         // Use sendMessage with quotedMessageId instead of Message#reply().
         // This also handles newer WhatsApp IDs where Message.id may expose $1.
-        const sent = await client.sendMessage(from, reply, {
-          quotedMessageId: quotedId,
-          ignoreQuoteErrors: true,
-          waitUntilMsgSent: true
-        });
+        let sent;
+        try {
+          sent = await message.reply(reply, undefined, {
+            quotedMessageId: quotedId,
+            ignoreQuoteErrors: true,
+            waitUntilMsgSent: true
+          });
+        } catch (replyError) {
+          console.error('Message.reply failed, trying direct send:', replyError.message);
+          sent = await client.sendMessage(from, reply, {
+            quotedMessageId: quotedId,
+            ignoreQuoteErrors: true,
+            waitUntilMsgSent: true
+          });
+        }
         await db.confirmationSent(
           businessId,
           order.id,
