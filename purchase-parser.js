@@ -77,7 +77,7 @@ function parseBill(text){
   const items=[];const seen=new Set();
   const addItem=(name,hsn,q,unit,rate,taxable,gstRate,taxAmount,lineTotal)=>{
     name=clean(name).replace(/^[:\-]+|[:\-]+$/g,'').trim(); hsn=clean(hsn);
-    if(!name||!hsn||!(q>0)||!(rate>0))return;
+    if(!name||!(q>0)||!(rate>0))return;
     if(/^(?:total|taxable amount|tax|invoice|amount|grand total|sr\.?|no\.?|name of product|product|service)$/i.test(name))return;
     if(/(?:^|\s)(?:phone|gstin|invoice no|challan no|e[- ]?way|transport|customer detail)(?:\s|:)/i.test(name))return;
     const key=[name.toLowerCase(),hsn,q,rate].join('|'); if(seen.has(key))return; seen.add(key);
@@ -98,6 +98,23 @@ function parseBill(text){
       addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
     }
   }
+
+  // Retail/GST invoice layout: Items | HSN | Quantity | MRP | Rate Per Unit | Tax Per Unit | Amount.
+  // HSN is optional because many retail bills omit it. Never invent an HSN when the bill does not contain one.
+  const retailRowRe=new RegExp('^(\\d+)\\s+(.+?)\\s+(?:(\\d{3,8}|[-—–])\\s+)?('+NUM+')\\s*([A-Za-z]{1,10})\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')\\s*(?:\\(([0-9]+(?:\\.[0-9]+)?)\\))?\\s+('+NUM+')$','i');
+  for(const line of lines){
+    const m=line.match(retailRowRe);
+    if(!m)continue;
+    let name=String(m[2]||'').trim();
+    // Tesseract can leave a tiny artifact immediately before a real capitalized product name.
+    name=name.replace(/^(?:[a-z]{1,3}\\s+)+(?=[A-Z])/,'').trim();
+    const hsn=(m[3]&&/^\\d+$/.test(m[3]))?m[3]:'';
+    const qty=num(m[4]), unit=m[5], mrp=num(m[6]), rate=num(m[7]), taxAmount=num(m[8]), gstFromText=m[9]?num(m[9]):0, total=num(m[10]);
+    const taxable=money(qty*rate);
+    const gst=gstFromText||((taxable>0&&taxAmount>0)?money(taxAmount/taxable*100):0);
+    addItem(name,hsn,qty,unit,rate,taxable,gst,taxAmount,total);
+  }
+
   return {supplier_name:sellerName,supplier_gstin:sellerGstin,supplier_address:'',buyer_name:buyerName,buyer_gstin:buyerGstin,buyer_pan:buyerPan,seller_pan:sellerPan,seller_phone:'',seller_address:'',seller_state:'',seller_state_code:'',seller_id:sellerPan||sellerGstin||sellerName,buyer_id:buyerGstin||buyerPan||buyerName,invoice_number:invoiceNo,invoice_date:invoiceDate,place_of_supply:pos,challan_number:challanNumber,challan_date:challanDate,eway_bill_number:eway,transport,transport_id:transportId,taxable_total:taxableTotal,tax_total:taxTotal,cgst,sgst,igst,invoice_total:invoiceTotal,items,raw_text:raw};
 }
 module.exports={parseBill};
