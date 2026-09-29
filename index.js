@@ -1,6 +1,26 @@
 require('dotenv').config();
-const {Client,LocalAuth}=require('whatsapp-web.js'); const qrcode=require('qrcode'); const db=require('./platform-db'); const path=require('path'); const fs=require('fs'); const {execFileSync}=require('child_process');
+const {Client,LocalAuth}=require('whatsapp-web.js'); const qrcode=require('qrcode'); const db=require('./platform-db'); const path=require('path'); const fs=require('fs'); const {execFileSync}=require('child_process'); const fs=require('fs'); const {execFileSync}=require('child_process');
 const clients=new Map(); const starting=new Set();
+const AUTH_ROOT=path.join(__dirname,'.wwebjs_auth');
+function profilePath(bid){return path.join(AUTH_ROOT,'session-business-'+bid)}
+function clearChromiumLocks(bid){
+  const profile=profilePath(bid);
+  if(!fs.existsSync(profile))return;
+  try{
+    const ps=execFileSync('ps',['-eo','pid=,args='],{encoding:'utf8'});
+    const pids=ps.split('\n').map(x=>x.trim()).filter(Boolean)
+      .filter(x=>x.includes('--user-data-dir='+profile)||x.includes('--user-data-dir="'+profile+'"'))
+      .map(x=>Number(x.split(/\s+/)[0])).filter(Number.isInteger).filter(x=>x>1);
+    for(const pid of pids){try{process.kill(pid,'SIGTERM')}catch{}}
+    if(pids.length){
+      try{execFileSync('sleep',['0.5'])}catch{}
+      for(const pid of pids){try{process.kill(pid,'SIGKILL')}catch{}}
+    }
+  }catch{}
+  for(const name of ['SingletonLock','SingletonSocket','SingletonCookie']){
+    try{fs.rmSync(path.join(profile,name),{force:true,recursive:true})}catch{}
+  }
+}
 const AUTH_ROOT=path.join(__dirname,'.wwebjs_auth');
 function profilePath(bid){return path.join(AUTH_ROOT,'session-business-'+bid)}
 function clearChromiumLocks(bid){
