@@ -12,7 +12,94 @@ function pdfToPng(buf){return new Promise((resolve,reject)=>{const dir=path.join
 async function extractText(file){if(file.mimetype!=='application/pdf')return ocrImage(file.buffer);let text='';try{text=(await pdfParse(file.buffer)).text||''}catch{}if(text.trim().length>80)return text;try{return await ocrImage(await pdfToPng(file.buffer))}catch{return text}}
 function cleanLines(t){return String(t||'').split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean)}
 function firstMatch(lines,patterns){for(const l of lines)for(const p of patterns){const m=l.match(p);if(m)return m[1].trim()}return ''}
-function parseBill(text){const lines=cleanLines(text);let supplier=firstMatch(lines,[/^M\/S\.?\s+(.+)/i,/^For\s+(.+)/i,/^Firm\s*[:\-]\s*(.+)/i]);let invoiceNo=firstMatch(lines,[/Invoice\s*No\.?\s*[:\-]?\s*([A-Z0-9\/-]+)/i,/Invoice\s*Number\s*[:\-]?\s*([A-Z0-9\/-]+)/i]);let invoiceDate=firstMatch(lines,[/Invoice\s*Date\s*[:\-]?\s*([0-9A-Za-z\/-]+)/i]);let gstin=firstMatch(lines,[/GSTIN\s*[:\-]?\s*([0-9A-Z]{15})/i]);let pos=firstMatch(lines,[/Place\s*of\s*Supply\s*[:\-]?\s*(.+)/i]);const items=[];for(let i=0;i<lines.length;i++){const l=lines[i];if(!/\b(8302|HSN|SAC)\b/i.test(l)&&!/\b\d+\s+(NOS|PCS|PC|BOX|SET|KG|LTR|M)\b/i.test(l))continue;const m=l.match(/^(?:\d+[.)]?\s+)?(.+?)\s+(\d{3,8})\s+(\d+(?:\.\d+)?)\s*(NOS|PCS|PC|BOX|SET|KG|LTR|M|PACK)?\s+(?:₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d+)?)\s+(?:[\d,]+(?:\.\d+)?\s+)?(?:IGST|CGST|SGST)?\s*(\d+(?:\.\d+)?)?%?/i);if(m){const name=m[1].trim();if(name.length>2&&!/total|amount|taxable|invoice/i.test(name)){items.push({name,hsn_code:m[2],quantity:Number(m[3]),unit:(m[4]||'PCS').toUpperCase(),purchase_price:Number(m[5].replace(/,/g,'')),gst_rate:Number(m[6]||0),taxable_value:Number(m[5].replace(/,/g,''))*Number(m[3]),tax_amount:0,line_total:Number(m[5].replace(/,/g,''))*Number(m[3])})}}}if(!items.length){for(const l of lines){const m=l.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*(PCS|NOS|PC|BOX|SET|KG|LTR|M)?\s+(?:₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d+)?)$/i);if(m&&!/total|amount|tax/i.test(m[1]))items.push({name:m[1],quantity:Number(m[2]),unit:(m[3]||'PCS').toUpperCase(),purchase_price:Number(m[4].replace(/,/g,'')),gst_rate:0,hsn_code:'',taxable_value:Number(m[4].replace(/,/g,''))*Number(m[2]),tax_amount:0,line_total:Number(m[4].replace(/,/g,''))*Number(m[2])})}}return {supplier_name:supplier,supplier_gstin:gstin,invoice_number:invoiceNo,invoice_date:invoiceDate,place_of_supply:pos,items,raw_text:text}}
+function num(v){return Number(String(v||'').replace(/,/g,''))||0}
+function afterLabel(lines,label){const re=new RegExp('^\\s*'+label+'\\s*[:\\-]?\\s*(.+)$','i');for(const l of lines){const m=l.match(re);if(m)return m[1].trim()}return ''}
+function findAllGst(text){return [...String(text||'').matchAll(/\\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9][Z][A-Z0-9]\\b/gi)].map(x=>x[0].toUpperCase())}
+function findPan(text){return (String(text||'').match(/\\b[A-Z]{5}[0-9]{4}[A-Z]\\b/i)||[])[0]||''}
+function skuFromBill(name,hsn){return makeSku(name,hsn)}
+function parseBill(text){
+  const lines=cleanLines(text);
+  const upper=String(text||'').toUpperCase();
+  const gstins=findAllGst(text);
+  const pan=findPan(text);
+  const invoiceNo=firstMatch(lines,[/Invoice\\s*(?:No|Number)\\.?\\s*[:\\-]?\\s*([A-Z0-9\\/-]+)/i]);
+  const invoiceDate=firstMatch(lines,[/Invoice\\s*Date\\s*[:\\-]?\\s*([0-9A-Za-z\\/-]+)/i]);
+  const challanNumber=firstMatch(lines,[/Challan\\s*No\\.?\\s*[:\\-]?\\s*([A-Z0-9\\/-]+)/i]);
+  const challanDate=firstMatch(lines,[/Challan\\s*Date\\s*[:\\-]?\\s*([0-9A-Za-z\\/-]+)/i]);
+  const eway=firstMatch(lines,[/E[- ]?Way\\s*Bill\\s*No\\.?\\s*[:\\-]?\\s*([A-Z0-9\\/-]+)/i]);
+  const transport=firstMatch(lines,[/^Transport\\s+(.+)/i]);
+  const transportId=firstMatch(lines,[/Transport\\s*ID\\s*[:\\-]?\\s*([A-Z0-9\\/-]+)/i]);
+  const pos=firstMatch(lines,[/Place\\s*of\\s*Supply\\s*[:\\-]?\\s*(.+)/i]);
+  const totalLine=lines.find(l=>/Total Amount After Tax/i.test(l))||'';
+  const invoiceTotal=num((totalLine.match(/₹\\s*([\\d,]+(?:\\.\\d+)?)/i)||[])[1])||num(afterLabel(lines,'Total Amount After Tax'));
+  const taxableTotal=num((lines.find(l=>/^Taxable Amount\\s/i.test(l))||'').match(/([\\d,]+(?:\\.\\d+)?)/)?.[1]);
+  const taxTotal=num((lines.find(l=>/^Total Tax\\s/i.test(l))||'').match(/([\\d,]+(?:\\.\\d+)?)/)?.[1]);
+  const igst=num((lines.find(l=>/^(?:Add\\s*:\\s*)?IGST\\s/i.test(l))||'').match(/([\\d,]+(?:\\.\\d+)?)/)?.[1]);
+  const cgst=num((lines.find(l=>/^CGST\\s/i.test(l))||'').match(/([\\d,]+(?:\\.\\d+)?)/)?.[1]);
+  const sgst=num((lines.find(l=>/^SGST\\s/i.test(l))||'').match(/([\\d,]+(?:\\.\\d+)?)/)?.[1]);
+
+  let buyerName=firstMatch(lines,[/^M\\/S\\.?\\s+(.+)/i]);
+  let buyerGstin='';
+  const customerIdx=lines.findIndex(l=>/Customer Detail/i.test(l));
+  if(customerIdx>=0){
+    for(let j=customerIdx;j<Math.min(lines.length,customerIdx+12);j++){
+      if(/GSTIN/i.test(lines[j])){buyerGstin=(lines[j].match(/([0-9A-Z]{15})/i)||[])[1]||'';break}
+    }
+  }
+  if(!buyerGstin&&gstins.length)buyerGstin=gstins[0];
+  const buyerPan=buyerGstin?buyerGstin.slice(2,12):'';
+  const sellerName=firstMatch(lines,[/^For\\s+(.+)/i])||firstMatch(lines,[/^(?!M\\/S).*?([A-Z][A-Za-z &]+(?:Tools|Industries|Enterprises|Traders|Engineering|Suppliers|Company))$/i])||'';
+  const sellerPan=pan;
+  const sellerGstin=gstins.length>1?gstins[gstins.length-1]:'';
+  const customerAddress=customerIdx>=0?cleanLines(lines.slice(customerIdx+1,Math.min(lines.length,customerIdx+8)).filter(x=>!/^(Phone|GSTIN|Place of Supply)/i.test(x)).join(', ')):'';
+  const phone=firstMatch(lines,[/Phone\\s*[:\\-]?\\s*(\\+?\\d[\\d -]{7,})/i]);
+  const items=[];
+  const itemRegex=/^\\s*\\d+[.)]?\\s+(.+?)\\s+(\\d{3,8})\\s+(\\d+(?:\\.\\d+)?)\\s+([A-Z]+)\\s+([\\d,]+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)\\s+(\\d+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)\\s*$/i;
+  for(const l of lines){
+    const m=l.match(itemRegex);
+    if(!m)continue;
+    const [,name,hsn,quantity,unit,rate,taxable,gstRate,taxAmount,lineTotal]=m;
+    if(/total|amount|taxable|invoice/i.test(name))continue;
+    items.push({name:name.trim(),supplier_sku:'',sku:skuFromBill(name,hsn),hsn_code:hsn,quantity:Number(quantity),unit:unit.toUpperCase(),purchase_price:num(rate),gst_rate:Number(gstRate),taxable_value:num(taxable),tax_amount:num(taxAmount),line_total:num(lineTotal)});
+  }
+  if(!items.length){
+    // More tolerant fallback: detect lines containing HSN + quantity + rate and use trailing monetary columns.
+    for(const l of lines){
+      const m=l.match(/^\\s*(?:\\d+[.)]?\\s+)?(.+?)\\s+(\\d{3,8})\\s+(\\d+(?:\\.\\d+)?)\\s*(NOS|PCS|PC|BOX|SET|KG|LTR|M|PACK)?\\s+([\\d,]+(?:\\.\\d+)?)(?:\\s+([\\d,]+(?:\\.\\d+)?))?(?:\\s+(\\d+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?))?(?:\\s+([\\d,]+(?:\\.\\d+)?))?$/i);
+      if(m&&!/total|amount|tax/i.test(m[1])){const rate=num(m[5]),taxable=num(m[6]||m[5]),gr=num(m[7]||0),ta=num(m[8]||0),lt=num(m[9]||taxable+ta);items.push({name:m[1].trim(),supplier_sku:'',sku:skuFromBill(m[1],m[2]),hsn_code:m[2],quantity:num(m[3]),unit:(m[4]||'PCS').toUpperCase(),purchase_price:rate,gst_rate:gr,taxable_value:taxable,tax_amount:ta,line_total:lt})}
+    }
+  }
+  const supplierAddress=customerIdx>0?cleanLines(lines.slice(Math.max(0,customerIdx-6),customerIdx).filter(x=>!/^PAN|TAX INVOICE|ORIGINAL|Manufacturing|Web|Tel/i.test(x)).join(', ')):'';
+  return {
+    supplier_name:sellerName,
+    supplier_gstin:sellerGstin,
+    supplier_address:supplierAddress,
+    buyer_name:buyerName,
+    buyer_gstin:buyerGstin,
+    buyer_pan:buyerPan,
+    seller_pan:sellerPan,
+    seller_phone:'',
+    seller_address:supplierAddress,
+    seller_state:'',
+    seller_state_code:'',
+    seller_id:sellerGstin||sellerPan||sellerName,
+    buyer_id:buyerGstin||buyerPan||buyerName,
+    invoice_number:invoiceNo,
+    invoice_date:invoiceDate,
+    place_of_supply:pos,
+    challan_number:challanNumber,
+    challan_date:challanDate,
+    eway_bill_number:eway,
+    transport,
+    transport_id:transportId,
+    taxable_total:taxableTotal,
+    tax_total:taxTotal,
+    cgst,sgst,igst,
+    invoice_total:invoiceTotal,
+    items,
+    raw_text:text
+  };
+}
 function words(n){n=Math.round(Number(n)||0);const a=['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'],b=['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];function x(v){if(v<20)return a[v];if(v<100)return b[Math.floor(v/10)]+' '+a[v%10];if(v<1000)return a[Math.floor(v/100)]+' Hundred '+x(v%100);if(v<100000)return x(Math.floor(v/1000))+' Thousand '+x(v%1000);if(v<10000000)return x(Math.floor(v/100000))+' Lakh '+x(v%100000);return x(Math.floor(v/10000000))+' Crore '+x(v%10000000)}return (x(n).replace(/\s+/g,' ').trim()||'Zero')+' Rupees Only'}
 function pdfInvoice(res,title,biz,inv){
   const doc=new PDFDocument({size:'A4',margin:32});
@@ -142,7 +229,7 @@ app.post('/api/invoices',async(r,s)=>{try{s.status(201).json({invoice:await db.c
 app.get('/api/invoices/:id/pdf',async(r,s)=>{const i=await db.invoice(r.businessId,Number(r.params.id)),b=await db.business(r.businessId);if(!i)return s.status(404).end();pdfInvoice(s,'invoice-'+i.invoice_no,b,i)});
 app.get('/api/orders/:id/invoice-pdf',async(r,s)=>{const o=await db.order(r.businessId,Number(r.params.id)),b=await db.business(r.businessId);if(!o)return s.status(404).end();const cust=await db.findCustomerByName(r.businessId,o.delivered_to);const tax=o.items.reduce((a,x)=>a+Number(x.total_tax||0),0);const same=!!(b.state_code&&cust?.state_code&&b.state_code===cust.state_code);const inv={invoice_no:(b.invoice_prefix||'INV')+'-ORDER-'+String(o.id).padStart(4,'0'),invoice_date:o.date,customer_name:o.delivered_to,customer_address:cust?.address||'',customer_phone:cust?.phone||'',customer_gstin:cust?.gstin||'',place_of_supply:cust?.state?(cust.state+' '+(cust.state_code||'')): '',challan_no:'',challan_date:'',eway_bill_no:'',transport:'',subtotal:o.items.reduce((a,x)=>a+Number(x.taxable_value||0),0),cgst:same?tax/2:0,sgst:same?tax/2:0,igst:same?0:tax,total:o.items.reduce((a,x)=>a+Number(x.line_total||0),0),items:o.items};pdfInvoice(s,'invoice-order-'+o.id,b,inv)});
 app.get('/api/purchases',async(r,s)=>s.json({purchases:await db.purchaseBills(r.businessId)})); app.get('/api/purchases/:id',async(r,s)=>s.json({purchase:await db.purchase(r.businessId,Number(r.params.id))}));
-app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{try{if(!r.file)return s.status(400).json({error:'Upload a PDF or image'});const text=await extractText(r.file),parsed=parseBill(text);const existing=await db.get('SELECT id FROM purchase_bills WHERE business_id=? AND file_hash=?',[r.businessId,hash(r.file.buffer)]);if(existing)return s.status(409).json({error:'This bill file was already uploaded',purchase_id:existing.id});const id=await db.createPurchase(r.businessId,{original_filename:r.file.originalname,file_type:r.file.mimetype,file_hash:hash(r.file.buffer),...parsed});for(const x of parsed.items)await db.addPurchaseItem(r.businessId,id,x);s.json({success:true,purchase:await db.purchase(r.businessId,id),extracted:parsed})}catch(e){s.status(400).json({error:e.message})}});
+app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{try{if(!r.file)return s.status(400).json({error:'Upload a PDF or image'});const text=await extractText(r.file),parsed=parseBill(text);if(!parsed.items.length)return s.status(400).json({error:'Could not extract any product rows. Upload a clearer bill PDF/image.'});const existing=await db.get('SELECT id FROM purchase_bills WHERE business_id=? AND file_hash=?',[r.businessId,hash(r.file.buffer)]);if(existing)return s.status(409).json({error:'This bill file was already uploaded',purchase_id:existing.id});const id=await db.createPurchase(r.businessId,{original_filename:r.file.originalname,file_type:r.file.mimetype,file_hash:hash(r.file.buffer),...parsed});for(const x of parsed.items)await db.addPurchaseItem(r.businessId,id,x);s.json({success:true,purchase:await db.purchase(r.businessId,id),extracted:parsed})}catch(e){console.error('Purchase extraction error:',e);s.status(400).json({error:e.message})}});
 app.post('/api/purchases/:id/confirm',async(r,s)=>{try{s.json({purchase:await db.confirmPurchase(r.businessId,Number(r.params.id),r.body.items||[])})}catch(e){s.status(400).json({error:e.message})}});
 app.get('/api/whatsapp/status',async(r,s)=>{try{s.json({status:await db.waStatus(r.businessId)})}catch(e){s.status(500).json({error:e.message})}}); app.post('/api/whatsapp/restart',async(r,s)=>{try{const worker=require('./index');await worker.startBusiness(r.businessId,true);s.json({success:true})}catch(e){s.status(400).json({error:e.message})}});
 app.get('/api/settings',async(r,s)=>s.json({business:await db.business(r.businessId)})); app.put('/api/settings',async(r,s)=>s.json({business:await db.updateBusiness(r.businessId,r.body)}));
