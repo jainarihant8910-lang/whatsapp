@@ -27,7 +27,10 @@ app.post('/api/items',async(r,s)=>{try{s.status(201).json({item:await db.addItem
 app.put('/api/items/:id',async(r,s)=>{try{s.json({item:await db.editItem(r.businessId,Number(r.params.id),r.body)})}catch(e){s.status(400).json({error:e.message})}});
 app.post('/api/items/:id/stock',async(r,s)=>{try{s.json({item:await db.stockIn(r.businessId,Number(r.params.id),r.body.quantity,r.body.reason)})}catch(e){s.status(400).json({error:e.message})}});
 app.get('/api/transactions',async(r,s)=>s.json({transactions:await db.transactions(r.businessId)}));
-app.get('/api/senders',async(r,s)=>s.json({senders:await db.senders(r.businessId)})); app.post('/api/senders',async(r,s)=>{try{s.status(201).json({sender:await db.addSender(r.businessId,r.body.phone,r.body.name)})}catch(e){s.status(400).json({error:e.message})}}); app.delete('/api/senders/:id',async(r,s)=>{await db.delSender(r.businessId,Number(r.params.id));s.json({success:true})});
+app.get('/api/senders',async(r,s)=>s.json({senders:await db.senders(r.businessId)}));
+app.post('/api/senders',async(r,s)=>{try{s.status(201).json({sender:await db.addSender(r.businessId,r.body.phone,r.body.name)})}catch(e){s.status(400).json({error:e.message})}});
+app.put('/api/senders/:id',async(r,s)=>{try{s.json({sender:await db.editSender(r.businessId,Number(r.params.id),r.body.phone,r.body.name)})}catch(e){s.status(400).json({error:e.message})}});
+app.delete('/api/senders/:id',async(r,s)=>{try{await db.delSender(r.businessId,Number(r.params.id));s.json({success:true})}catch(e){s.status(400).json({error:e.message})}});
 app.get('/api/customers',async(r,s)=>s.json({customers:await db.customers(r.businessId)})); app.post('/api/customers',async(r,s)=>{try{s.status(201).json({customer:await db.addCustomer(r.businessId,r.body)})}catch(e){s.status(400).json({error:e.message})}});
 app.get('/api/orders',async(r,s)=>s.json({orders:await db.orders(r.businessId)})); app.get('/api/orders/:id',async(r,s)=>{const o=await db.order(r.businessId,Number(r.params.id));if(!o)return s.status(404).json({error:'Order not found'});s.json({order:o})});
 app.get('/api/invoices',async(r,s)=>s.json({invoices:await db.invoices(r.businessId)})); app.get('/api/invoices/:id',async(r,s)=>{const i=await db.invoice(r.businessId,Number(r.params.id));if(!i)return s.status(404).json({error:'Invoice not found'});s.json({invoice:i})});
