@@ -123,10 +123,13 @@ function parseBill(text){
     }
   }
 
-  if(!items.length&&headerIndex>=0){
-    const tableFlat=lines.slice(headerIndex+1).join(' ').replace(/\s+/g,' ').trim();
-    const rowRe=new RegExp('(?:^|\\s)(\\d+)[.)]?\\s+(.+?)\\s+(\\d{3,8})\\s+('+NUM+')\\s+([A-Za-z]{1,10})\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')(?=\\s+\\d+[.)]?\\s|\\s+Total\\b|\\s+Total\\s+in\\s+words\\b|$)','gi');
-    let m;while((m=rowRe.exec(tableFlat)))addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
+  if(!items.length){
+    const headerPos=flat.search(/Name\s+of\s+Product\s*\/\s*Service/i);
+    const tableFlat=headerPos>=0?flat.slice(headerPos):'';
+    if(tableFlat){
+      const rowRe=new RegExp('(?:^|\s)(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+('+NUM+')\s+([A-Za-z]{1,10})\s+('+NUM+')\s+('+NUM+')\s+('+NUM+')\s+('+NUM+')\s+('+NUM+')(?=\s+\d+[.)]?\s|\s+Total\b|\s+Total\s+in\s+words\b|$)','gi');
+      let m;while((m=rowRe.exec(tableFlat)))addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
+    }
   }
 
   return {supplier_name:sellerName,supplier_gstin:sellerGstin,supplier_address:'',buyer_name:buyerName,buyer_gstin:buyerGstin,buyer_pan:buyerPan,seller_pan:sellerPan,seller_phone:'',seller_address:'',seller_state:'',seller_state_code:'',seller_id:sellerGstin||sellerPan||sellerName,buyer_id:buyerGstin||buyerPan||buyerName,invoice_number:invoiceNo,invoice_date:invoiceDate,place_of_supply:pos,challan_number:challanNumber,challan_date:challanDate,eway_bill_number:eway,transport,transport_id:transportId,taxable_total:taxableTotal,tax_total:taxTotal,cgst,sgst,igst,invoice_total:invoiceTotal,items,raw_text:raw};
