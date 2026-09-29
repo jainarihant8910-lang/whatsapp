@@ -69,6 +69,36 @@ async function extractText(file){
   try{return await extractPdfText(file.buffer)}catch(e){console.error('PDF text extraction failed:',e.message);return ''}
 }
 const {parseBill}=require('./purchase-parser');
+function mergePurchaseParses(primary,secondary){
+  const a=primary||{}, b=secondary||{};
+  const items=[];
+  const seen=new Set();
+  for(const x of [...(a.items||[]),...(b.items||[])]){
+    const key=[String(x.name||'').toLowerCase().replace(/[^a-z0-9]+/g,''),Number(x.quantity||0),Number(x.purchase_price||0),String(x.hsn_code||'')].join('|');
+    if(!key||seen.has(key))continue;
+    seen.add(key);items.push(x);
+  }
+  return {...a,...b,
+    supplier_name:b.supplier_name||a.supplier_name||'',
+    supplier_gstin:b.supplier_gstin||a.supplier_gstin||'',
+    buyer_name:b.buyer_name||a.buyer_name||'',
+    buyer_gstin:b.buyer_gstin||a.buyer_gstin||'',
+    buyer_pan:b.buyer_pan||a.buyer_pan||'',
+    seller_pan:b.seller_pan||a.seller_pan||'',
+    seller_id:b.seller_id||a.seller_id||'',
+    buyer_id:b.buyer_id||a.buyer_id||'',
+    invoice_number:b.invoice_number||a.invoice_number||'',
+    invoice_date:b.invoice_date||a.invoice_date||'',
+    place_of_supply:b.place_of_supply||a.place_of_supply||'',
+    taxable_total:Number(b.taxable_total||0)||Number(a.taxable_total||0)||0,
+    tax_total:Number(b.tax_total||0)||Number(a.tax_total||0)||0,
+    cgst:Number(b.cgst||0)||Number(a.cgst||0)||0,
+    sgst:Number(b.sgst||0)||Number(a.sgst||0)||0,
+    igst:Number(b.igst||0)||Number(a.igst||0)||0,
+    invoice_total:Number(b.invoice_total||0)||Number(a.invoice_total||0)||0,
+    items
+  };
+}
 function words(n){n=Math.round(Number(n)||0);const a=['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'],b=['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];function x(v){if(v<20)return a[v];if(v<100)return b[Math.floor(v/10)]+' '+a[v%10];if(v<1000)return a[Math.floor(v/100)]+' Hundred '+x(v%100);if(v<100000)return x(Math.floor(v/1000))+' Thousand '+x(v%1000);if(v<10000000)return x(Math.floor(v/100000))+' Lakh '+x(v%100000);return x(Math.floor(v/10000000))+' Crore '+x(v%10000000)}return (x(n).replace(/\s+/g,' ').trim()||'Zero')+' Rupees Only'}
 function pdfInvoice(res,title,biz,inv){
   const doc=new PDFDocument({size:'A4',margin:32});
@@ -229,7 +259,7 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
           if(ocrText.trim()){
             const ocrParsed=parseBill(ocrText);
             if(ocrParsed.items.length){
-              parsed={...ocrParsed,
+              parsed=mergePurchaseParses(parsed,ocrParsed); parsed={...parsed,
                 supplier_name:ocrParsed.supplier_name||parsed.supplier_name,
                 supplier_gstin:ocrParsed.supplier_gstin||parsed.supplier_gstin,
                 buyer_name:ocrParsed.buyer_name||parsed.buyer_name,
