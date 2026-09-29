@@ -31,7 +31,7 @@ function parseBill(text){
       const same=[...lines[i].matchAll(new RegExp('(?:₹|Rs\\.?|INR)?\\s*('+NUM+')','gi'))].map(m=>num(m[1]));
       if(same.length)return same[same.length-1];
       for(let j=i+1;j<Math.min(lines.length,i+4);j++){
-        if(/^\\d[\\d,.]*$/.test(lines[j])||/^(?:₹|Rs\\.?|INR)\\s*[\\d,]+(?:\\.\\d+)?$/i.test(lines[j]))return num(lines[j]);
+        if(/^\d[\d,.]*$/.test(lines[j])||/^(?:₹|Rs\.?|INR)\s*[\d,]+(?:\.\d+)?$/i.test(lines[j]))return num(lines[j]);
       }
     }
     return 0;
