@@ -17,9 +17,21 @@ function openProduct(){modal('Add product',`<form id='productForm' class='formgr
 async function stockIn(id){const q=prompt('Quantity to add');if(q===null)return;try{await api('/api/items/'+id+'/stock',{method:'POST',body:{quantity:Number(q),reason:'Manual stock addition'}});toast('Stock added');productsPage()}catch(e){toast(e.message,true)}}
 async function ordersPage(){
   const d=await api('/api/orders');orders=d.orders||[];
-  $('page').innerHTML=`<div class='bar'><div><h3>Orders</h3><p class='muted'>One row per WhatsApp message. Returns automatically add stock back.</p></div><button onclick="go('transactions')">Stock history</button></div>
+  $('page').innerHTML=`<div class='bar'><div><h3>Orders</h3><p class='muted'>One row per WhatsApp message. Returns automatically add stock back.</p></div><button onclick="openReturnPicker()">↩ Quick return</button><button onclick="go('transactions')">Stock history</button></div>
   <div class='panel tablewrap'><table><thead><tr><th>Order</th><th>Date</th><th>Delivered to</th><th>Items</th><th>Accepted</th><th>Returned</th><th>Status</th><th>Actions</th></tr></thead><tbody>${orders.map(o=>`<tr><td>#${o.id}</td><td>${esc(o.date)} ${esc(o.time)}</td><td>${esc(o.delivered_to)}</td><td>${n(o.total_items)}</td><td>${n(o.accepted_items)}</td><td>${n(o.returned_items||0)}</td><td><span class='badge ${String(o.status).toLowerCase()}'>${esc(o.status)}</span></td><td><button onclick="voice(${o.id})">🔊 Voice</button><button onclick="pdf('/api/orders/${o.id}/invoice-pdf')">🧾 Invoice PDF</button>${['SUCCESS','PARTIAL','PARTIAL_RETURN'].includes(o.status)?`<button onclick="openReturn(${o.id})">↩ Return</button>`:''}</td></tr>`).join('')}</tbody></table></div>`;
 }
+async function openReturnPicker(){
+  try{
+    const d=await api('/api/orders');
+    const list=(d.orders||[]).filter(o=>['SUCCESS','PARTIAL','PARTIAL_RETURN'].includes(o.status));
+    modal('Quick return portal',\`
+      <p class='muted'>Select a delivered order. You can return all or only part of any accepted item. Returned quantity is added back to stock and the server prevents returning more than the remaining delivered quantity.</p>
+      <label>Order<select id='returnOrderPick'>\${list.map(o=>\`<option value='\${o.id}'>#\${o.id} — \${esc(o.delivered_to)} — \${esc(o.date)} — \${esc(o.status)}</option>\`).join('')||'<option value="">No delivered orders available</option>'}</select></label>
+      <button id='openPickedReturn' class='primary'>Continue</button>\`);
+    $('openPickedReturn').onclick=()=>{const id=Number($('returnOrderPick').value);if(id)openReturn(id);else toast('No delivered orders available.',true)};
+  }catch(e){toast(e.message,true)}
+}
+
 async function openReturn(id){
   try{
     const d=await api('/api/orders/'+id);const o=d.order;
