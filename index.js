@@ -366,10 +366,18 @@ async function startBusiness(businessId, force = false) {
 
 async function startAll() {
   await db.ready;
-  const rows = await db.all('SELECT id FROM businesses');
+  const rows = await db.all('SELECT id FROM businesses ORDER BY id');
 
+  // Do not launch several Chromium/WhatsApp sessions at the exact same time.
+  // Codespaces has limited CPU/RAM and simultaneous Chromium startups can cause
+  // "Target closed" / "Failed to launch the browser process" and endless QR loops.
   for (const business of rows) {
-    startBusiness(business.id).catch(console.error);
+    try {
+      await startBusiness(business.id);
+    } catch (e) {
+      console.error('WhatsApp startup failed for business', business.id, e.message);
+    }
+    await new Promise(resolve => setTimeout(resolve, 8000));
   }
 }
 
