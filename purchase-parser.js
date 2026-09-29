@@ -84,54 +84,20 @@ function parseBill(text){
     items.push({name,supplier_sku:'',sku:makeSku(name,hsn),hsn_code:hsn,quantity:q,unit:String(unit||'PCS').toUpperCase(),purchase_price:rate,gst_rate:Number(gstRate||0),taxable_value:taxable||money(q*rate),tax_amount:taxAmount||0,line_total:lineTotal||money((taxable||money(q*rate))+(taxAmount||0))});
   };
 
-  const headerIndex=lines.findIndex(l=>/Name\s+of\s+Product\s*\/\s*Service/i.test(l));
-  let tableLines=headerIndex>=0?lines.slice(headerIndex+1):[];
-  if(headerIndex<0){const sr=lines.findIndex(l=>/^Sr\.?$/.test(l));if(sr>=0)tableLines=lines.slice(sr+1)}
-
-  for(let i=0;i<tableLines.length;i++){
-    const line=tableLines[i];
-    if(/^Total\b/i.test(line)||/^Total\s+in\s+words/i.test(line))break;
-    if(parseProductRowText(line,addItem))continue;
-
-    if(/^\d+[.)]?$/.test(line)){
-      let j=i+1; const nameParts=[];
-      while(j<tableLines.length && !/^\d{3,8}$/.test(tableLines[j]) && !/^Total\b/i.test(tableLines[j])){
-        nameParts.push(tableLines[j]);j++;
-      }
-      if(j<tableLines.length && /^\d{3,8}$/.test(tableLines[j])){
-        const hsn=tableLines[j++];
-        if(j<tableLines.length){
-          const qm=tableLines[j].match(new RegExp('^('+NUM+')\\s+([A-Za-z]{1,10})$'));
-          if(qm){
-            const q=num(qm[1]),unit=qm[2];j++;
-            const nums=[];
-            while(j<tableLines.length&&nums.length<5){
-              const tokens=tableLines[j].split(/\s+/).filter(Boolean);
-              if(!tokens.length||/^Total\b/i.test(tableLines[j]))break;
-              let consumed=true;
-              for(const t of tokens){if(parseNumberLine(t)!==null)nums.push(num(t));else{consumed=false;break}}
-              if(!consumed)break;
-              j++;
-            }
-            if(nums.length>=5){
-              addItem(nameParts.join(' '),hsn,q,unit,nums[0],nums[1],nums[2],nums[3],nums[4]);
-              i=j-1;continue;
-            }
-          }
-        }
-      }
+  // Product extraction is intentionally based on the flattened table stream.
+  // This handles both PDFs that keep rows on separate lines and PDFs that flatten
+  // every cell into one line. Comma-formatted money such as 2,535.00 is supported.
+  const headerPos=flat.search(/Name\s+of\s+Product\s*\/\s*Service/i);
+  const srPos=flat.search(/Sr\.?\s*No\.?/i);
+  const tableStart=headerPos>=0?headerPos:(srPos>=0?srPos:-1);
+  if(tableStart>=0){
+    const tableFlat=flat.slice(tableStart);
+    const rowRe=new RegExp('(?:^|\\s)(\\d+)[.)]?\\s+(.+?)\\s+(\\d{3,8})\\s+('+NUM+')\\s+([A-Za-z]{1,10})\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')(?=\\s+\\d+[.)]?\\s|\\s+Total\\b|\\s+Total\\s+in\\s+words\\b|$)','gi');
+    let m;
+    while((m=rowRe.exec(tableFlat))){
+      addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
     }
   }
-
-  if(!items.length){
-    const headerPos=flat.search(/Name\s+of\s+Product\s*\/\s*Service/i);
-    const tableFlat=headerPos>=0?flat.slice(headerPos):'';
-    if(tableFlat){
-      const rowRe=new RegExp('(?:^|\s)(\d+)[.)]?\s+(.+?)\s+(\d{3,8})\s+('+NUM+')\s+([A-Za-z]{1,10})\s+('+NUM+')\s+('+NUM+')\s+('+NUM+')\s+('+NUM+')\s+('+NUM+')(?=\s+\d+[.)]?\s|\s+Total\b|\s+Total\s+in\s+words\b|$)','gi');
-      let m;while((m=rowRe.exec(tableFlat)))addItem(m[2],m[3],num(m[4]),m[5],num(m[6]),num(m[7]),num(m[8]),num(m[9]),num(m[10]));
-    }
-  }
-
   return {supplier_name:sellerName,supplier_gstin:sellerGstin,supplier_address:'',buyer_name:buyerName,buyer_gstin:buyerGstin,buyer_pan:buyerPan,seller_pan:sellerPan,seller_phone:'',seller_address:'',seller_state:'',seller_state_code:'',seller_id:sellerGstin||sellerPan||sellerName,buyer_id:buyerGstin||buyerPan||buyerName,invoice_number:invoiceNo,invoice_date:invoiceDate,place_of_supply:pos,challan_number:challanNumber,challan_date:challanDate,eway_bill_number:eway,transport,transport_id:transportId,taxable_total:taxableTotal,tax_total:taxTotal,cgst,sgst,igst,invoice_total:invoiceTotal,items,raw_text:raw};
 }
 module.exports={parseBill};
