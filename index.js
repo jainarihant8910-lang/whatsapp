@@ -376,7 +376,7 @@ async function startBusiness(businessId, force = false) {
         if (stockMessageId) {
           const already = await db.get('SELECT 1 FROM processed_messages WHERE business_id=? AND message_id=?',[businessId,stockMessageId]);
           if (already) return;
-          await db.run('INSERT OR IGNORE INTO processed_messages(business_id,message_id,whatsapp_from,sender_phone,body) VALUES(?,?,?,?,?)',[businessId,stockMessageId,from,'','[STOCK QUERY]');
+          await db.run('INSERT OR IGNORE INTO processed_messages(business_id,message_id,whatsapp_from,sender_phone,body) VALUES(?,?,?,?,?)',[businessId,stockMessageId,from,'','[STOCK QUERY]']);
           const claimed = await db.get('SELECT 1 FROM processed_messages WHERE business_id=? AND message_id=?',[businessId,stockMessageId]);
           if (!claimed) return;
         }
