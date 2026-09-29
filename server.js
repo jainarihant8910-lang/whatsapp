@@ -14,7 +14,111 @@ function cleanLines(t){return String(t||'').split(/\r?\n/).map(x=>x.replace(/\s+
 function firstMatch(lines,patterns){for(const l of lines)for(const p of patterns){const m=l.match(p);if(m)return m[1].trim()}return ''}
 function parseBill(text){const lines=cleanLines(text);let supplier=firstMatch(lines,[/^M\/S\.?\s+(.+)/i,/^For\s+(.+)/i,/^Firm\s*[:\-]\s*(.+)/i]);let invoiceNo=firstMatch(lines,[/Invoice\s*No\.?\s*[:\-]?\s*([A-Z0-9\/-]+)/i,/Invoice\s*Number\s*[:\-]?\s*([A-Z0-9\/-]+)/i]);let invoiceDate=firstMatch(lines,[/Invoice\s*Date\s*[:\-]?\s*([0-9A-Za-z\/-]+)/i]);let gstin=firstMatch(lines,[/GSTIN\s*[:\-]?\s*([0-9A-Z]{15})/i]);let pos=firstMatch(lines,[/Place\s*of\s*Supply\s*[:\-]?\s*(.+)/i]);const items=[];for(let i=0;i<lines.length;i++){const l=lines[i];if(!/\b(8302|HSN|SAC)\b/i.test(l)&&!/\b\d+\s+(NOS|PCS|PC|BOX|SET|KG|LTR|M)\b/i.test(l))continue;const m=l.match(/^(?:\d+[.)]?\s+)?(.+?)\s+(\d{3,8})\s+(\d+(?:\.\d+)?)\s*(NOS|PCS|PC|BOX|SET|KG|LTR|M|PACK)?\s+(?:₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d+)?)\s+(?:[\d,]+(?:\.\d+)?\s+)?(?:IGST|CGST|SGST)?\s*(\d+(?:\.\d+)?)?%?/i);if(m){const name=m[1].trim();if(name.length>2&&!/total|amount|taxable|invoice/i.test(name)){items.push({name,hsn_code:m[2],quantity:Number(m[3]),unit:(m[4]||'PCS').toUpperCase(),purchase_price:Number(m[5].replace(/,/g,'')),gst_rate:Number(m[6]||0),taxable_value:Number(m[5].replace(/,/g,''))*Number(m[3]),tax_amount:0,line_total:Number(m[5].replace(/,/g,''))*Number(m[3])})}}}if(!items.length){for(const l of lines){const m=l.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*(PCS|NOS|PC|BOX|SET|KG|LTR|M)?\s+(?:₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d+)?)$/i);if(m&&!/total|amount|tax/i.test(m[1]))items.push({name:m[1],quantity:Number(m[2]),unit:(m[3]||'PCS').toUpperCase(),purchase_price:Number(m[4].replace(/,/g,'')),gst_rate:0,hsn_code:'',taxable_value:Number(m[4].replace(/,/g,''))*Number(m[2]),tax_amount:0,line_total:Number(m[4].replace(/,/g,''))*Number(m[2])})}}return {supplier_name:supplier,supplier_gstin:gstin,invoice_number:invoiceNo,invoice_date:invoiceDate,place_of_supply:pos,items,raw_text:text}}
 function words(n){n=Math.round(Number(n)||0);const a=['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'],b=['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];function x(v){if(v<20)return a[v];if(v<100)return b[Math.floor(v/10)]+' '+a[v%10];if(v<1000)return a[Math.floor(v/100)]+' Hundred '+x(v%100);if(v<100000)return x(Math.floor(v/1000))+' Thousand '+x(v%1000);if(v<10000000)return x(Math.floor(v/100000))+' Lakh '+x(v%100000);return x(Math.floor(v/10000000))+' Crore '+x(v%10000000)}return (x(n).replace(/\s+/g,' ').trim()||'Zero')+' Rupees Only'}
-function pdfInvoice(res,title,biz,inv){const doc=new PDFDocument({size:'A4',margin:35});res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','attachment; filename="'+title+'.pdf"');doc.pipe(res);doc.fontSize(16).text('TAX INVOICE',{align:'center'}).fontSize(9).text('ORIGINAL FOR RECIPIENT',{align:'center'}).moveDown();doc.fontSize(13).text(biz.name||'Business',{align:'center'}).fontSize(8).text((biz.address||'')+' | GSTIN: '+(biz.gstin||'-'),{align:'center'}).moveDown();doc.fontSize(9).text('Customer: '+(inv.customer_name||'-'));doc.text('Address: '+(inv.customer_address||'-'));doc.text('GSTIN: '+(inv.customer_gstin||'-'));doc.text('Invoice No: '+inv.invoice_no+'    Date: '+inv.invoice_date);doc.text('Place of Supply: '+(inv.place_of_supply||inv.customer_state||'-'));doc.moveDown();doc.fontSize(8).text('Sr | Product | HSN | Qty | Rate | Taxable | GST | Total');doc.moveTo(35,doc.y+2).lineTo(560,doc.y+2).stroke();doc.moveDown(6);inv.items.forEach((x,i)=>{doc.text((i+1)+' | '+x.item_name+' | '+(x.hsn_code||'-')+' | '+x.quantity+' '+x.unit+' | '+Number(x.rate||0).toFixed(2)+' | '+Number(x.taxable_value||0).toFixed(2)+' | '+Number(x.total_tax||0).toFixed(2)+' | '+Number(x.line_total||0).toFixed(2));doc.moveDown(4)});doc.moveDown().text('Taxable Amount: '+Number(inv.subtotal).toFixed(2));doc.text('CGST: '+Number(inv.cgst).toFixed(2)+'    SGST: '+Number(inv.sgst).toFixed(2));doc.text('IGST: '+Number(inv.igst).toFixed(2));doc.fontSize(11).text('TOTAL AMOUNT: Rs. '+Number(inv.total).toFixed(2));doc.fontSize(9).text('Amount in words: '+words(inv.total));doc.moveDown(2).text('Certified that the particulars above are true and correct.');doc.moveDown(3).text('For '+(biz.name||'Business'),{align:'right'}).text('Authorised Signatory',{align:'right'});doc.end()}
+function pdfInvoice(res,title,biz,inv){
+  const doc=new PDFDocument({size:'A4',margin:32});
+  res.setHeader('Content-Type','application/pdf');
+  res.setHeader('Content-Disposition','inline; filename="'+title+'.pdf"');
+  doc.pipe(res);
+
+  const W=doc.page.width, L=32, R=W-32, CW=R-L;
+  const money2=v=>Number(v||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const drawLine=(y)=>{doc.moveTo(L,y).lineTo(R,y).stroke();};
+  const cell=(x,y,w,h,text,opts={})=>{
+    doc.rect(x,y,w,h).stroke();
+    doc.fontSize(opts.size||7.5).font(opts.bold?'Helvetica-Bold':'Helvetica')
+      .text(String(text??''),x+4,y+4,w-8,h-8,{align:opts.align||'left'});
+  };
+
+  doc.fontSize(17).font('Helvetica-Bold').text('TAX INVOICE',L,28,CW,{align:'center'});
+  doc.fontSize(8).font('Helvetica').text('ORIGINAL FOR RECIPIENT',L,49,CW,{align:'center'});
+
+  let y=68;
+  doc.fontSize(15).font('Helvetica-Bold').text(biz.name||'Business',L,y,CW,{align:'center'});
+  y+=19;
+  doc.fontSize(8).font('Helvetica').text('GSTIN: '+(biz.gstin||'-'),L,y,CW,{align:'center'});
+  y+=13;
+  doc.text(biz.address||'-',L,y,CW,{align:'center'});
+  y+=18;
+  drawLine(y); y+=7;
+
+  const leftW=CW*0.56, rightW=CW-leftW;
+  const infoH=112;
+  doc.rect(L,y,leftW,infoH).stroke();
+  doc.rect(L+leftW,y,rightW,infoH).stroke();
+  doc.fontSize(8).font('Helvetica-Bold').text('Customer Detail',L+7,y+7);
+  doc.font('Helvetica').fontSize(8)
+    .text('Customer: '+(inv.customer_name||'-'),L+7,y+23,leftW-14)
+    .text('Address: '+(inv.customer_address||'-'),L+7,y+38,leftW-14)
+    .text('Phone: '+(inv.customer_phone||'-'),L+7,y+53,leftW-14)
+    .text('GSTIN: '+(inv.customer_gstin||'-'),L+7,y+68,leftW-14)
+    .text('Place of Supply: '+(inv.place_of_supply||'-'),L+7,y+83,leftW-14);
+  const rx=L+leftW+7;
+  doc.font('Helvetica').fontSize(8)
+    .text('Invoice No.: '+(inv.invoice_no||'-'),rx,y+10,rightW-14)
+    .text('Invoice Date: '+(inv.invoice_date||'-'),rx,y+26,rightW-14)
+    .text('Challan No.: '+(inv.challan_no||'-'),rx,y+42,rightW-14)
+    .text('Challan Date: '+(inv.challan_date||'-'),rx,y+58,rightW-14)
+    .text('E-Way Bill No.: '+(inv.eway_bill_no||'-'),rx,y+74,rightW-14)
+    .text('Transport: '+(inv.transport||'-'),rx,y+90,rightW-14);
+  y+=infoH+10;
+
+  const cols=[
+    {t:'Sr. No.',w:38,a:'center'},{t:'Name of Product / Service',w:150},
+    {t:'HSN / SAC',w:58,a:'center'},{t:'Qty',w:45,a:'center'},
+    {t:'Rate',w:62,a:'right'},{t:'Taxable Value',w:75,a:'right'},
+    {t:'GST',w:45,a:'right'},{t:'Total',w:CW-473,a:'right'}
+  ];
+  const headerH=24;
+  let x=L;
+  cols.forEach(c=>{cell(x,y,c.w,headerH,c.t,{bold:true,size:7,align:c.a||'center'});x+=c.w});
+  y+=headerH;
+  const rowH=30;
+  (inv.items||[]).forEach((it,idx)=>{
+    x=L;
+    const vals=[
+      idx+1,
+      it.item_name||'-',
+      it.hsn_code||'-',
+      money2(it.quantity)+' '+(it.unit||'PCS'),
+      money2(it.rate),
+      money2(it.taxable_value),
+      money2(it.total_tax),
+      money2(it.line_total)
+    ];
+    cols.forEach((c,j)=>{cell(x,y,c.w,rowH,vals[j],{size:j===1?7:7,align:c.a||'left'});x+=c.w});
+    y+=rowH;
+  });
+  const totalVals=['','','','TOTAL',money2((inv.items||[]).reduce((a,x)=>a+Number(x.rate||0)*Number(x.quantity||0),0)),money2(inv.subtotal),money2((Number(inv.cgst||0)+Number(inv.sgst||0)+Number(inv.igst||0))),money2(inv.total)];
+  x=L; cols.forEach((c,j)=>{cell(x,y,c.w,25,totalVals[j],{bold:true,size:7,align:c.a||'right'});x+=c.w}); y+=25;
+
+  y+=10;
+  const sumW=250;
+  doc.font('Helvetica-Bold').fontSize(8).text('Tax Summary',L,y);
+  y+=15;
+  [['Taxable Amount',money2(inv.subtotal)],['CGST',money2(inv.cgst)],['SGST',money2(inv.sgst)],['IGST',money2(inv.igst)],['Total Tax',money2(Number(inv.cgst)+Number(inv.sgst)+Number(inv.igst))],['Total Amount After Tax','₹ '+money2(inv.total)]].forEach((r,k)=>{
+    const h=k===5?24:19;
+    cell(L,y,sumW/2,h,r[0],{bold:k===5,size:7.5});
+    cell(L+sumW/2,y,sumW/2,h,r[1],{bold:k===5,size:7.5,align:'right'});
+    y+=h;
+  });
+  doc.font('Helvetica-Bold').fontSize(8).text('Total in words',L+sumW+20,y-110);
+  doc.font('Helvetica').fontSize(9).text(words(inv.total).toUpperCase(),L+sumW+20,y-92,CW-sumW-20);
+  doc.font('Helvetica').fontSize(8).text('Certified that the particulars given above are true and correct.',L,y+10,CW);
+  y+=38;
+
+  const footerTop=Math.max(y,doc.page.height-145);
+  doc.moveTo(L,footerTop).lineTo(R,footerTop).stroke();
+  doc.font('Helvetica-Bold').fontSize(8).text('Terms and Conditions',L,footerTop+8);
+  doc.font('Helvetica').fontSize(7)
+    .text('1. Goods once sold will not be taken back.\n2. Delivery subject to agreed terms.\n3. E. & O.E.',L,footerTop+23,250);
+  doc.font('Helvetica-Bold').fontSize(8).text('Customer Signature',L+270,footerTop+8);
+  doc.rect(L+270,footerTop+22,110,45).stroke();
+  doc.font('Helvetica-Bold').fontSize(8).text('For '+(biz.name||'Business'),R-150,footerTop+8,150,{align:'right'});
+  doc.rect(R-150,footerTop+22,150,45).stroke();
+  doc.font('Helvetica').fontSize(8).text('Authorised Signatory',R-150,footerTop+72,150,{align:'right'});
+  doc.fontSize(7).text('Thank you for shopping with us!',L,doc.page.height-25,CW,{align:'center'});
+  doc.end();
+}
 app.get('/api/health',async(r,s)=>{try{await db.ready; s.json({ok:true})}catch(e){s.status(500).json({ok:false,error:e.message})}});
 app.post('/api/auth/register',async(r,s)=>{try{await db.ready;s.status(201).json({success:true,business:await db.register(r.body.firm_id,r.body.name,r.body.password)})}catch(e){s.status(400).json({error:e.message})}});
 app.post('/api/auth/login',async(r,s)=>{try{await db.ready;const x=await db.login(r.body.firm_id,r.body.password);if(!x)return s.status(401).json({error:'Invalid Firm ID or password'});s.cookieToken=x.token;s.setHeader('Set-Cookie','dm_token='+encodeURIComponent(x.token)+'; HttpOnly; Path=/; SameSite=Lax'+(process.env.NODE_ENV==='production'?'; Secure':''));try{require('./index').startBusiness(x.business.id).catch(e=>console.error('WhatsApp lazy startup:',e.message))}catch(e){console.error('WhatsApp worker load:',e.message)}s.json({success:true,csrf:x.csrf,business:x.business,user:x.user})}catch(e){s.status(500).json({error:e.message})}});
@@ -36,7 +140,7 @@ app.get('/api/orders',async(r,s)=>s.json({orders:await db.orders(r.businessId)})
 app.get('/api/invoices',async(r,s)=>s.json({invoices:await db.invoices(r.businessId)})); app.get('/api/invoices/:id',async(r,s)=>{const i=await db.invoice(r.businessId,Number(r.params.id));if(!i)return s.status(404).json({error:'Invoice not found'});s.json({invoice:i})});
 app.post('/api/invoices',async(r,s)=>{try{s.status(201).json({invoice:await db.createInvoice(r.businessId,r.body)})}catch(e){s.status(400).json({error:e.message})}}); app.post('/api/invoices/:id/finalize',async(r,s)=>{try{s.json({invoice:await db.finalizeInvoice(r.businessId,Number(r.params.id))})}catch(e){s.status(400).json({error:e.message})}}); app.post('/api/invoices/:id/cancel',async(r,s)=>{try{s.json({invoice:await db.cancelInvoice(r.businessId,Number(r.params.id))})}catch(e){s.status(400).json({error:e.message})}});
 app.get('/api/invoices/:id/pdf',async(r,s)=>{const i=await db.invoice(r.businessId,Number(r.params.id)),b=await db.business(r.businessId);if(!i)return s.status(404).end();pdfInvoice(s,'invoice-'+i.invoice_no,b,i)});
-app.get('/api/orders/:id/pdf',async(r,s)=>{const o=await db.order(r.businessId,Number(r.params.id)),b=await db.business(r.businessId);if(!o)return s.status(404).end();const i={invoice_no:'ORDER-'+o.id,invoice_date:o.date,customer_name:o.delivered_to,customer_address:'',customer_gstin:'',customer_state:'',place_of_supply:'',subtotal:o.items.reduce((a,x)=>a+Number(x.taxable_value||0),0),cgst:0,sgst:0,igst:o.items.reduce((a,x)=>a+Number(x.total_tax||0),0),total:o.items.reduce((a,x)=>a+Number(x.line_total||0),0),items:o.items};pdfInvoice(s,'order-'+o.id,b,i)});
+app.get('/api/orders/:id/invoice-pdf',async(r,s)=>{const o=await db.order(r.businessId,Number(r.params.id)),b=await db.business(r.businessId);if(!o)return s.status(404).end();const cust=await db.findCustomerByName(r.businessId,o.delivered_to);const tax=o.items.reduce((a,x)=>a+Number(x.total_tax||0),0);const same=!!(b.state_code&&cust?.state_code&&b.state_code===cust.state_code);const inv={invoice_no:(b.invoice_prefix||'INV')+'-ORDER-'+String(o.id).padStart(4,'0'),invoice_date:o.date,customer_name:o.delivered_to,customer_address:cust?.address||'',customer_phone:cust?.phone||'',customer_gstin:cust?.gstin||'',place_of_supply:cust?.state?(cust.state+' '+(cust.state_code||'')): '',challan_no:'',challan_date:'',eway_bill_no:'',transport:'',subtotal:o.items.reduce((a,x)=>a+Number(x.taxable_value||0),0),cgst:same?tax/2:0,sgst:same?tax/2:0,igst:same?0:tax,total:o.items.reduce((a,x)=>a+Number(x.line_total||0),0),items:o.items};pdfInvoice(s,'invoice-order-'+o.id,b,inv)});
 app.get('/api/purchases',async(r,s)=>s.json({purchases:await db.purchaseBills(r.businessId)})); app.get('/api/purchases/:id',async(r,s)=>s.json({purchase:await db.purchase(r.businessId,Number(r.params.id))}));
 app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{try{if(!r.file)return s.status(400).json({error:'Upload a PDF or image'});const text=await extractText(r.file),parsed=parseBill(text);const existing=await db.get('SELECT id FROM purchase_bills WHERE business_id=? AND file_hash=?',[r.businessId,hash(r.file.buffer)]);if(existing)return s.status(409).json({error:'This bill file was already uploaded',purchase_id:existing.id});const id=await db.createPurchase(r.businessId,{original_filename:r.file.originalname,file_type:r.file.mimetype,file_hash:hash(r.file.buffer),...parsed});for(const x of parsed.items)await db.addPurchaseItem(r.businessId,id,x);s.json({success:true,purchase:await db.purchase(r.businessId,id),extracted:parsed})}catch(e){s.status(400).json({error:e.message})}});
 app.post('/api/purchases/:id/confirm',async(r,s)=>{try{s.json({purchase:await db.confirmPurchase(r.businessId,Number(r.params.id),r.body.items||[])})}catch(e){s.status(400).json({error:e.message})}});
