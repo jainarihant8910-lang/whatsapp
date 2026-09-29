@@ -4,7 +4,7 @@
   "description": "WhatsApp delivery messages to Google Sheets",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node run.js"
   },
   "dependencies": {
     "axios": "^1.20.0",
