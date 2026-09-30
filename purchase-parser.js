@@ -153,8 +153,22 @@ function parseBill(text){
     }
   }
 
-  // Standard invoice row: Sr No | Product | HSN | Qty Unit | Rate | Taxable | GST | Total.\n  // This is the common layout used by generated and scanned GST invoices.\n  const standardRowRe=new RegExp('^(\\\\d{1,4})[.)]?\\\\s+(.+?)\\\\s+(\\\\d{3,8})\\\\s+('+NUM+')\\\\s*([A-Za-z]{1,10})\\\\s+('+NUM+')\\\\s+('+NUM+')\\\\s+('+NUM+')\\\\s+('+NUM+') Items | HSN | Quantity | MRP | Rate Per Unit | Tax Per Unit | Amount.
-  // HSN is optional because many retail bills omit it. Never invent an HSN when the bill does not contain one.
+  // Standard invoice row: Sr No | Product | HSN | Qty Unit | Rate | Taxable | GST | Total.
+  // This is the common layout used by generated and scanned GST invoices.
+  const standardRowRe=new RegExp('^(\\d{1,4})[.)]?\\s+(.+?)\\s+(\\d{3,8})\\s+('+NUM+')\\s*([A-Za-z]{1,10})\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')$','i');
+  for(const line of lines){
+    const m=line.match(standardRowRe);
+    if(!m)continue;
+    const name=String(m[2]||'').trim();
+    if(!name||/^(?:total|subtotal|grand total|taxable amount|invoice total|sr\\.?\\s*no|product|description)$/i.test(name))continue;
+    const hsn=m[3], qty=num(m[4]), unit=m[5]||'PCS', rate=num(m[6]), taxable=num(m[7]), gstRate=num(m[8]), total=num(m[9]);
+    if(qty>0&&rate>0){
+      const actualTaxable=taxable>0?taxable:money(qty*rate);
+      const taxAmount=total>actualTaxable?money(total-actualTaxable):0;
+      addItem(name,hsn,qty,unit,rate,actualTaxable,gstRate,taxAmount,total||money(actualTaxable+taxAmount));
+    }
+  }
+
   const retailRowRe=new RegExp('^(\\d+)\\s+(.+?)\\s+(?:(\\d{3,8}|[-—–])\\s+)?('+NUM+')\\s*([A-Za-z]{1,10})\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')\\s*(?:\\(([0-9]+(?:\\.[0-9]+)?)\\))?\\s+('+NUM+')$','i');
   for(const line of lines){
     const m=line.match(retailRowRe);
