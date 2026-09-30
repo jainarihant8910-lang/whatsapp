@@ -1,5 +1,5 @@
 require('dotenv').config();
-const express=require('express'); const path=require('path'); const crypto=require('crypto'); const multer=require('multer'); const pdfParse=require('pdf-parse'); const Tesseract=require('tesseract.js'); const PDFDocument=require('pdfkit'); const db=require('./platform-db');
+const express=require('express'); const path=require('path'); const crypto=require('crypto'); const fs=require('fs'); const os=require('os'); const {spawn}=require('child_process'); const multer=require('multer'); const pdfParse=require('pdf-parse'); const Tesseract=require('tesseract.js'); const PDFDocument=require('pdfkit'); const db=require('./platform-db');
 const app=express(); const PORT=Number(process.env.PORT)||3000; const PUBLIC=path.join(__dirname,'public');
 app.use(express.json({limit:'3mb'})); app.use(express.urlencoded({extended:true})); app.use(express.static(PUBLIC));
 function cookieToken(req){const m=String(req.headers.cookie||'').match(/(?:^|;)\s*dm_token=([^;]+)/);return m?decodeURIComponent(m[1]):''}
@@ -7,9 +7,91 @@ async function auth(req,res,next){try{const s=await db.session(cookieToken(req))
 function csrf(req,res,next){if(['GET','HEAD','OPTIONS'].includes(req.method))return next();const c=String(req.headers['x-csrf-token']||'');if(!c)return res.status(403).json({error:'CSRF token missing'});db.get('SELECT csrf_hash FROM sessions WHERE token_hash=?',[crypto.createHash('sha256').update(cookieToken(req)).digest('hex')]).then(s=>{if(!s||s.csrf_hash!==crypto.createHash('sha256').update(c).digest('hex'))return res.status(403).json({error:'Invalid CSRF token'});next()}).catch(e=>res.status(500).json({error:e.message}))}
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:25*1024*1024},fileFilter:(r,f,cb)=>cb(null,['application/pdf','image/jpeg','image/png','image/webp'].includes(f.mimetype))});
 function hash(buf){return crypto.createHash('sha256').update(buf).digest('hex')}
+let paddleWorker=null;
+let paddleWorkerBuffer='';
+let paddleRequestId=0;
+const paddlePending=new Map();
+let paddleQueue=Promise.resolve();
+
+function startPaddleWorker(){
+  if(paddleWorker&&!paddleWorker.killed)return paddleWorker;
+  const python=process.env.PYTHON_BIN||'python3';
+  const script=path.join(__dirname,'paddle_ocr_worker.py');
+  if(!fs.existsSync(script))return null;
+  try{
+    paddleWorker=spawn(python,[script],{stdio:['pipe','pipe','pipe']});
+    paddleWorkerBuffer='';
+    paddleWorker.stdout.on('data',chunk=>{
+      paddleWorkerBuffer+=chunk.toString();
+      let nl;
+      while((nl=paddleWorkerBuffer.indexOf('\n'))>=0){
+        const line=paddleWorkerBuffer.slice(0,nl).trim();
+        paddleWorkerBuffer=paddleWorkerBuffer.slice(nl+1);
+        if(!line)continue;
+        try{
+          const msg=JSON.parse(line);
+          const pending=paddlePending.get(msg.id);
+          if(!pending)continue;
+          paddlePending.delete(msg.id);
+          if(msg.ok)pending.resolve(String(msg.text||''));
+          else pending.reject(new Error(msg.error||'PaddleOCR worker failed'));
+        }catch(e){console.error('PaddleOCR worker response parse error:',e.message)}
+      }
+    });
+    paddleWorker.stderr.on('data',chunk=>console.log('PaddleOCR:',chunk.toString().trim()));
+    const fail=e=>{
+      for(const [id,pending] of paddlePending){pending.reject(e);paddlePending.delete(id)}
+      paddleWorker=null;
+    };
+    paddleWorker.on('error',fail);
+    paddleWorker.on('exit',(code,signal)=>{
+      if(code!==0)console.error('PaddleOCR worker exited:',code,signal||'');
+      for(const [id,pending] of paddlePending){pending.reject(new Error('PaddleOCR worker exited'));paddlePending.delete(id)}
+      paddleWorker=null;
+    });
+    return paddleWorker;
+  }catch(e){
+    console.error('Unable to start PaddleOCR worker:',e.message);
+    paddleWorker=null;
+    return null;
+  }
+}
+
+function paddleOcrOnce(buf){
+  return new Promise((resolve,reject)=>{
+    const worker=startPaddleWorker();
+    if(!worker)return reject(new Error('PaddleOCR is not installed or Python is unavailable'));
+    const id=++paddleRequestId;
+    paddlePending.set(id,{resolve,reject});
+    try{
+      worker.stdin.write(JSON.stringify({id,image:Buffer.from(buf).toString('base64')})+'\n');
+    }catch(e){
+      paddlePending.delete(id);
+      reject(e);
+    }
+  });
+}
+
+async function paddleOcrImage(buf){
+  const run=paddleQueue.then(()=>paddleOcrOnce(buf));
+  paddleQueue=run.catch(()=>{});
+  return run;
+}
+
 async function ocrImage(buf){
-  const opts={logger:x=>{if(x.status==='recognizing text'&&Math.round((x.progress||0)*100)%20===0)console.log('OCR',Math.round((x.progress||0)*100)+'%')}};
-  // PSM 4 works better for invoice tables whose columns are visually separated.
+  const opts={logger:x=>{if(x.status==='recognizing text'&&Math.round((x.progress||0)*100)%20===0)console.log('Tesseract OCR',Math.round((x.progress||0)*100)+'%')}};
+
+  // Primary OCR: PaddleOCR PP-OCRv5. It performs text detection + recognition
+  // locally; no invoice data is sent to a third-party OCR API.
+  try{
+    const paddleText=await paddleOcrImage(buf);
+    if(paddleText&&paddleText.trim().length>=8)return paddleText;
+  }catch(e){
+    console.log('PaddleOCR unavailable/failed; using Tesseract fallback:',e.message);
+  }
+
+  // Existing OCR remains as a fallback so the website still works when
+  // PaddleOCR has not been installed or the worker/model fails.
   try{
     const r=await Tesseract.recognize(buf,'eng',{...opts,tessedit_pageseg_mode:'4'});
     return r.data.text||'';
