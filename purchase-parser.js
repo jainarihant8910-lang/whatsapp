@@ -154,7 +154,6 @@ function parseBill(text){
   }
 
   // Standard invoice row: Sr No | Product | HSN | Qty Unit | Rate | Taxable | GST | Total.
-  // This is the common layout used by generated and scanned GST invoices.
   const standardRowRe=new RegExp('^(\\d{1,4})[.)]?\\s+(.+?)\\s+(\\d{3,8})\\s+('+NUM+')\\s*([A-Za-z]{1,10})\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')$','i');
   for(const line of lines){
     const m=line.match(standardRowRe);
