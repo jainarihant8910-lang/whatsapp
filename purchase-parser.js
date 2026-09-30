@@ -105,7 +105,16 @@ function parseBill(text){
     if(!name||!(q>0)||!(rate>0))return;
     if(/^(?:total|taxable amount|tax|invoice|amount|grand total|sr\.?|no\.?|name of product|product|service)$/i.test(name))return;
     if(/(?:^|\s)(?:phone|gstin|invoice no|challan no|e[- ]?way|transport|customer detail)(?:\s|:)/i.test(name))return;
-    const key=[name.toLowerCase(),hsn,q,rate].join('|'); if(seen.has(key))return; seen.add(key);
+    const normalizedName=name.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+    const duplicate=items.find(x=>String(x.name||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()===normalizedName && Number(x.quantity)===Number(q) && Number(x.purchase_price)===Number(rate));
+    if(duplicate){
+      if(!duplicate.hsn_code && hsn)duplicate.hsn_code=hsn;
+      if(!(Number(duplicate.gst_rate)>0) && Number(gstRate)>0)duplicate.gst_rate=Number(gstRate);
+      if(!(Number(duplicate.tax_amount)>0) && Number(taxAmount)>0)duplicate.tax_amount=taxAmount;
+      if(!(Number(duplicate.line_total)>0) && Number(lineTotal)>0)duplicate.line_total=lineTotal;
+      return;
+    }
+    const key=[normalizedName,q,rate].join('|'); if(seen.has(key))return; seen.add(key);
     items.push({name,supplier_sku:'',sku:makeSku(name,hsn),hsn_code:hsn,quantity:q,unit:String(unit||'PCS').toUpperCase(),purchase_price:rate,gst_rate:Number(gstRate||0),taxable_value:taxable||money(q*rate),tax_amount:taxAmount||0,line_total:lineTotal||money((taxable||money(q*rate))+(taxAmount||0))});
   };
 
