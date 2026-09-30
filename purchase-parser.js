@@ -106,7 +106,7 @@ function parseBill(text){
     if(/^(?:total|taxable amount|tax|invoice|amount|grand total|sr\.?|no\.?|name of product|product|service)$/i.test(name))return;
     if(/(?:^|\s)(?:phone|gstin|invoice no|challan no|e[- ]?way|transport|customer detail)(?:\s|:)/i.test(name))return;
     const normalizedName=name.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
-    const duplicate=items.find(x=>String(x.name||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()===normalizedName && Number(x.quantity)===Number(q) && Number(x.purchase_price)===Number(rate));
+    const duplicate=items.find(x=>String(x.name||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()===normalizedName && Number(x.quantity)===Number(q) && (!hsn || !x.hsn_code || String(x.hsn_code)===String(hsn)));
     if(duplicate){
       if(!duplicate.hsn_code && hsn)duplicate.hsn_code=hsn;
       if(!(Number(duplicate.gst_rate)>0) && Number(gstRate)>0)duplicate.gst_rate=Number(gstRate);
