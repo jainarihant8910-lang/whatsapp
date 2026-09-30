@@ -52,16 +52,16 @@ function parseBill(text){
   // OCR may place the percentage and amount on separate lines, so inspect
   // nearby lines instead of requiring the amount to be on the same line.
   const gstSummary=(label)=>{
-    const re=new RegExp('\\b'+label+'\\b','i');
+    const re=new RegExp('\b'+label+'\b','i');
     for(let i=0;i<lines.length;i++){
       if(!re.test(lines[i]))continue;
       const same=lines[i];
-      const perc=[...same.matchAll(/(\\d+(?:\\.\\d+)?)\\s*%/g)].map(m=>num(m[1]));
-      const nums=[...same.matchAll(/(?:₹|Rs\\.?|INR)?\\s*(\\d[\\d,]*(?:\\.\\d+)?)/gi)].map(m=>num(m[1]));
+      const perc=[...same.matchAll(/(\d+(?:\.\d+)?)\s*%/g)].map(m=>num(m[1]));
+      const nums=[...same.matchAll(/(?:₹|Rs\.?|INR)?\s*(\d[\d,]*(?:\.\d+)?)/gi)].map(m=>num(m[1]));
       if(nums.length)return {rate:perc[0]||0,amount:nums[nums.length-1]};
       for(let j=i+1;j<Math.min(lines.length,i+3);j++){
-        if(/^(?:CGST|SGST|IGST)\\b/i.test(lines[j]))break;
-        if(/^\\d[\\d,.]*$/.test(lines[j]))return {rate:perc[0]||0,amount:num(lines[j])};
+        if(/^(?:CGST|SGST|IGST)\b/i.test(lines[j]))break;
+        if(/^\d[\d,.]*$/.test(lines[j]))return {rate:perc[0]||0,amount:num(lines[j])};
       }
       return {rate:perc[0]||0,amount:0};
     }
