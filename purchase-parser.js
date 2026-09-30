@@ -115,6 +115,12 @@ function parseBill(text){
       return sameName&&sameHsn;
     });
     if(duplicate){
+      const duplicateName=String(duplicate.name||'').trim();
+      if(normalizedName.length<duplicateName.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().length
+        && duplicateName.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().endsWith(' '+normalizedName)){
+        duplicate.name=name;
+        duplicate.sku=makeSku(name,hsn||duplicate.hsn_code);
+      }
       if(!duplicate.hsn_code && hsn)duplicate.hsn_code=hsn;
       if(!(Number(duplicate.gst_rate)>0) && Number(gstRate)>0)duplicate.gst_rate=Number(gstRate);
       if(!(Number(duplicate.tax_amount)>0) && Number(taxAmount)>0)duplicate.tax_amount=taxAmount;
