@@ -92,3 +92,21 @@ const retailText=[
 }
 
 console.log('Purchase parser tests passed.');
+
+const looseImageOcr = [
+  'TAX INVOICE',
+  '1 Bosch Drill Machine 8207 2 PCS 1,250.00 2,500.00 9% 225.00 9% 225.00 2,950.00',
+  '2 Taparia Screwdriver Set 8205 3 PCS 300.00 900.00 9% 81.00 9% 81.00 1,062.00',
+  'CGST 9% 306.00',
+  'SGST 9% 306.00',
+  'Total Tax 612.00',
+  'Total Amount 4,012.00'
+].join('\\n');
+const loose=parseBill(looseImageOcr);
+assert.equal(loose.items.length,2,'loose OCR rows should recover all products');
+assert.deepEqual(loose.items.map(x=>x.quantity),[2,3]);
+assert.deepEqual(loose.items.map(x=>x.purchase_price),[1250,300]);
+assert.equal(loose.cgst,306);
+assert.equal(loose.sgst,306);
+assert.equal(loose.tax_total,612);
+assert.equal(loose.invoice_total,4012);
