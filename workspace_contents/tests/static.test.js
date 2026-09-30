@@ -10,7 +10,7 @@ function must(text, pattern, message) { if (!pattern.test(text)) throw new Error
 must(index, /inFlightMessageIds/, 'Missing in-flight WhatsApp duplicate guard.');
 if (!index.includes('db.claimConfirmation(order.id)')) throw new Error('Missing atomic confirmation claim.');
 if (!index.includes('handleStockCommand(\n                        message,\n                        WHATSAPP_BUSINESS_ID')) throw new Error('Stock command is not business-scoped.');
-must(index, /📦 \\*CURRENT STOCK\\*/, 'Stock reply heading was not normalized.');
+if (!index.includes('📦 *CURRENT STOCK*')) throw new Error('Stock reply heading was not normalized.');
 must(database, /async function claimConfirmation\\(orderId\\)/, 'Missing database confirmation claim.');
 must(database, /confirmation_sent = 2/, 'Missing confirmation sending state.');
 if (!database.includes('Number(item.current_stock) !== 0')) throw new Error('Delete guard must require zero stock.');
