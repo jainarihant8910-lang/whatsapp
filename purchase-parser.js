@@ -57,8 +57,8 @@ function parseBill(text){
       const line=String(lines[i]||'').trim();
       if(!line.toUpperCase().startsWith(wanted))continue;
       const window=lines.slice(i,Math.min(lines.length,i+3)).join(' ');
-      const perc=[...window.matchAll(/(\\d+(?:\\.\\d+)?)\\s*%/g)].map(m=>num(m[1]));
-      const nums=[...window.matchAll(/(?:₹|Rs\\.?|INR)?\\s*(\\d[\\d,]*(?:\\.\\d+)?)/gi)].map(m=>num(m[1]));
+      const perc=[...window.matchAll(/(\d+(?:\.\d+)?)\s*%/g)].map(m=>num(m[1]));
+      const nums=[...window.matchAll(/(?:₹|Rs\.?|INR)?\s*(\d[\d,]*(?:\.\d+)?)/gi)].map(m=>num(m[1]));
       if(nums.length)return {rate:perc[0]||0,amount:nums[nums.length-1]};
       return {rate:perc[0]||0,amount:0};
     }
