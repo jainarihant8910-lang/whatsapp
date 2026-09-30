@@ -683,35 +683,49 @@ async function updateStock(
     );
 }
 
-async function getItems() {
+async function getItems(businessId = null) {
+    const where = businessId === null || businessId === undefined
+        ? ""
+        : "WHERE business_id = ?";
+    const params = businessId === null || businessId === undefined
+        ? []
+        : [businessId];
+
     return all(
-        `
-        SELECT
-            *,
-            CASE
-                WHEN current_stock <= minimum_stock
-                THEN 1
-                ELSE 0
-            END AS low_stock
-        FROM items
-        ORDER BY name COLLATE NOCASE ASC
-        `
+        `SELECT *, CASE WHEN current_stock <= minimum_stock THEN 1 ELSE 0 END AS low_stock
+         FROM items ${where}
+         ORDER BY name COLLATE NOCASE ASC`,
+        params
     );
 }
 
-async function deleteItem(id) {
-    return run(
-        `
-        DELETE FROM items
-        WHERE id = ?
-        `,
-        [id]
-    );
+async function deleteItem(id, businessId = null) {
+    const item = businessId === null || businessId === undefined
+        ? await get("SELECT * FROM items WHERE id = ?", [id])
+        : await get("SELECT * FROM items WHERE id = ? AND business_id = ?", [id, businessId]);
+
+    if (!item) throw new Error("Product not found.");
+    if (Number(item.current_stock) !== 0) {
+        throw new Error("A product can only be deleted when its stock is exactly zero.");
+    }
+
+    return businessId === null || businessId === undefined
+        ? run("DELETE FROM items WHERE id = ?", [id])
+        : run("DELETE FROM items WHERE id = ? AND business_id = ?", [id, businessId]);
 }
 
 // ============================================================
 // MESSAGE DUPLICATE PROTECTION
 // ============================================================
+
+async function claimConfirmation(orderId) {
+    const result = await run(
+        `UPDATE orders SET confirmation_sent = 2
+         WHERE id = ? AND confirmation_sent = 0`,
+        [orderId]
+    );
+    return result.changes === 1;
+}
 
 async function isMessageProcessed(messageId) {
     const row = await get(
@@ -1484,6 +1498,7 @@ module.exports = {
     getOrders,
 
     markConfirmationSent,
+    claimConfirmation,
     markConfirmationPending,
 
     getStockTransactions,
