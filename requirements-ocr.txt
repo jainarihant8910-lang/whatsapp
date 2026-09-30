@@ -1,0 +1,4 @@
+# CPU installation for the Codespace/server.
+# PaddleOCR 3.x requires PaddlePaddle 3.x or newer.
+paddlepaddle>=3.0,<4
+paddleocr>=3.0,<4
