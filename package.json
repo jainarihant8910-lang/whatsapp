@@ -12,7 +12,7 @@
     "test:all": "npm run check && npm run test:parser && npm test && npm run test:qr",
     "test:parser": "node purchase-parser.test.js",
     "test:soak": "node soak-test.js",
-    "setup:ocr": "python3 -m pip install -r requirements-ocr.txt",
+    "setup:ocr": "node -e \"console.log('OCR.space is API-based; set OCR_SPACE_API_KEY in .env. No Python OCR installation is required.')\"",
     "test:regression": "node regression-test.js"
   },
   "engines": {
