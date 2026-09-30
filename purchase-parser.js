@@ -284,7 +284,8 @@ function parseBill(text){
   const itemTaxTotal=money(items.reduce((s,x)=>s+Number(x.tax_amount||0),0));
   const itemInvoiceTotal=money(items.reduce((s,x)=>s+Number(x.line_total||0),0));
   const finalTaxableTotal=taxableTotal||itemTaxableTotal;
-  const finalTaxTotal=taxTotal||itemTaxTotal||((invoiceTotal||itemInvoiceTotal)>finalTaxableTotal?money((invoiceTotal||itemInvoiceTotal)-finalTaxableTotal):0);
+  const summaryTaxTotal=money(cgst+sgst+igst);
+  const finalTaxTotal=taxTotal||summaryTaxTotal||itemTaxTotal||((invoiceTotal||itemInvoiceTotal)>finalTaxableTotal?money((invoiceTotal||itemInvoiceTotal)-finalTaxableTotal):0);
   const finalInvoiceTotal=invoiceTotal||itemInvoiceTotal;
   // If the bill gives GST only in the summary, carry that written GST rate
   // onto items that do not already have a reliable line-level GST rate.
