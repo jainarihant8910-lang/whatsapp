@@ -56,12 +56,12 @@ function parseBill(text){
     for(let i=0;i<lines.length;i++){
       const line=String(lines[i]||'').trim();
       if(!line.toUpperCase().startsWith(wanted))continue;
+      const sameNums=[...line.matchAll(/(?:₹|Rs\.?|INR)?\s*(\d[\d,]*(?:\.\d+)?)/gi)].map(m=>num(m[1]));
       const window=lines.slice(i,Math.min(lines.length,i+3)).join(' ');
       const perc=[...window.matchAll(/(\d+(?:\.\d+)?)\s*%/g)].map(m=>num(m[1]));
+      if(sameNums.length)return {rate:perc[0]||0,amount:sameNums[sameNums.length-1]};
       const nums=[...window.matchAll(/(?:₹|Rs\.?|INR)?\s*(\d[\d,]*(?:\.\d+)?)/gi)].map(m=>num(m[1]));
-      if(nums.length)return {rate:perc[0]||0,amount:nums[nums.length-1]};
-      return {rate:perc[0]||0,amount:0};
-    }
+      if(nums.length)return {rate:perc[0]||0,amount:nums[0]};
     return {rate:0,amount:0};
   };
   const ig=gstSummary('IGST');
