@@ -107,7 +107,10 @@ function parseBill(text){
     if(/(?:^|\s)(?:phone|gstin|invoice no|challan no|e[- ]?way|transport|customer detail)(?:\s|:)/i.test(name))return;
     const normalizedName=name.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
     const duplicate=items.find(x=>{
-      const sameName=String(x.name||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()===normalizedName;
+      const existingName=String(x.name||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+      const sameName=existingName===normalizedName
+        || (normalizedName.length>=5 && existingName.endsWith(' '+normalizedName))
+        || (existingName.length>=5 && normalizedName.endsWith(' '+existingName));
       const sameHsn=!hsn || !x.hsn_code || String(x.hsn_code)===String(hsn);
       return sameName&&sameHsn;
     });
