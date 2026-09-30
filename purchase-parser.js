@@ -153,7 +153,108 @@ function parseBill(text){
     }
   }
 
-  // Retail/GST invoice layout: Items | HSN | Quantity | MRP | Rate Per Unit | Tax Per Unit | Amount.
+  // Standard invoice row: Sr No | Product | HSN | Qty Unit | Rate | Taxable | GST | Total.\n  // This is the common layout used by generated and scanned GST invoices.\n  const standardRowRe=new RegExp('^(\\\\d{1,4})[.)]?\\\\s+(.+?)\\\\s+(\\\\d{3,8})\\\\s+('+NUM+')\\\\s*([A-Za-z]{1,10})\\\\s+('+NUM+')\\\\s+('+NUM+')\\\\s+('+NUM+')\\\\s+('+NUM+') Items | HSN | Quantity | MRP | Rate Per Unit | Tax Per Unit | Amount.
+  // HSN is optional because many retail bills omit it. Never invent an HSN when the bill does not contain one.
+  const retailRowRe=new RegExp('^(\\d+)\\s+(.+?)\\s+(?:(\\d{3,8}|[-—–])\\s+)?('+NUM+')\\s*([A-Za-z]{1,10})\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')\\s*(?:\\(([0-9]+(?:\\.[0-9]+)?)\\))?\\s+('+NUM+')$','i');
+  for(const line of lines){
+    const m=line.match(retailRowRe);
+    if(!m)continue;
+    let name=String(m[2]||'').trim();
+    // Tesseract can leave a tiny artifact immediately before a real capitalized product name.
+    name=name.replace(/^(?:[a-z]{1,3}\s+)+(?=[A-Z])/,'').trim();
+    const hsn=(m[3]&&/^\d+$/.test(m[3]))?m[3]:'';
+    const qty=num(m[4]), unit=m[5], mrp=num(m[6]), rate=num(m[7]), taxAmount=num(m[8]), gstFromText=m[9]?num(m[9]):0, total=num(m[10]);
+    const taxable=money(qty*rate);
+    const gst=gstFromText||((taxable>0&&taxAmount>0)?money(taxAmount/taxable*100):0);
+    addItem(name,hsn,qty,unit,rate,taxable,gst,taxAmount,total);
+  }
+
+
+  // OCR often breaks one product row across several physical lines. Rebuild
+  // rows beginning with a serial number before applying the column parsers.
+  const rebuiltRows=[];
+  let pending='';
+  for(const line of lines){
+    if(/^\d{1,4}[.)]?\s*$/.test(line)){
+      if(pending)rebuiltRows.push(pending);
+      pending=line;
+    }else if(pending && !/^(?:total|subtotal|taxable amount|total tax|grand total|invoice total|amount in words|terms|bank details|customer signature|authori[sz]ed signatory|page\s+\d+)/i.test(line)){
+      pending+=' '+line;
+    }else if(pending){
+      rebuiltRows.push(pending); pending='';
+    }
+  }
+  if(pending)rebuiltRows.push(pending);
+
+  for(const row of rebuiltRows){
+    if(parseProductRowText(row,addItem))continue;
+    const rr=retailRowRe.exec(row);
+    if(rr){
+      const name=String(rr[2]||'').trim();
+      const hsn=(rr[3]&&/^\d+$/.test(rr[3]))?rr[3]:'';
+      const qty=num(rr[4]), unit=rr[5], rate=num(rr[7]), taxAmount=num(rr[8]), gstRate=rr[9]?num(rr[9]):0, total=num(rr[10]);
+      const taxable=money(qty*rate);
+      const gst=gstRate||((taxable>0&&taxAmount>0)?money(taxAmount/taxable*100):0);
+      addItem(name,hsn,qty,unit,rate,taxable,gst,taxAmount,total);
+      continue;
+    }
+    const rm=new RegExp('^(\\d+)[.)]?\\s+(.+?)\\s+(?:(\\d{3,8})\\s+)?('+NUM+')\\s*([A-Za-z]{1,10})\\s+('+NUM+')\\s+('+NUM+')\\s+(?:(('+NUM+')\\s*)?(?:\\(([0-9]+(?:\\.[0-9]+)?)\\))?\\s+)?('+NUM+')$','i').exec(row);
+    if(!rm)continue;
+    const name=String(rm[2]||'').trim();
+    const hsn=(rm[3]&&/^\d+$/.test(rm[3]))?rm[3]:'';
+    const qty=num(rm[4]), unit=rm[5], n1=num(rm[6]), n2=num(rm[7]), tax=num(rm[8]), gst=rm[9]?num(rm[9]):0, total=num(rm[10]);
+    // Four numeric values after quantity are interpreted as MRP, rate, tax, total.
+    // Five numeric values are interpreted as rate, taxable, GST, tax, total.
+    if(rm[10]){
+      const rate=(gst>0||tax>0)&&n2>0?n2:n1;
+      const taxable=money(qty*rate);
+      const gstRate=gst||((taxable>0&&tax>0)?money(tax/taxable*100):0);
+      addItem(name,hsn,qty,unit,rate,taxable,gstRate,tax,total);
+    }
+  }
+
+  // Last-resort OCR row parser. OCR can flatten or shift table columns, so use
+  // serial + quantity/unit + numeric-tail anchors instead of one exact layout.
+  for(const line of lines){
+    const head=line.match(/^(\\d{1,4})[.)]?\\s+(.+?)\\s+(?:(\\d{3,8})\\s+)?(\\d+(?:[.,]\\d+)?)\\s*([A-Za-z]{1,10})\\s+(.+)$/);
+    if(!head)continue;
+    const name=String(head[2]||'').trim();
+    if(!name||/^(?:total|subtotal|taxable amount|grand total|invoice|amount|sr|no|product|service)$/i.test(name))continue;
+    const hsn=(head[3]&&/^\\d+$/.test(head[3]))?head[3]:'';
+    const qty=num(head[4]), unit=String(head[5]||'PCS').toUpperCase();
+    const tail=String(head[6]||'');
+    const nums=[]; const reNum=/(?:₹|Rs\\.?|INR)?\\s*(\\d[\\d,]*(?:\\.\\d+)?)/gi;
+    let nm;
+    while((nm=reNum.exec(tail)))nums.push(num(nm[1]));
+    if(nums.length<3||!(qty>0))continue;
+
+    let rate=0,taxable=0,gstRate=0,taxAmount=0,total=0;
+    const paren=(tail.match(/\\(([0-9]+(?:\\.[0-9]+)?)\\)/)||[])[1];
+    if(nums.length>=5){
+      rate=nums[nums.length-5]; taxable=nums[nums.length-4];
+      gstRate=paren?num(paren):nums[nums.length-3];
+      taxAmount=nums[nums.length-2]; total=nums[nums.length-1];
+    }else if(nums.length===4){
+      rate=nums[0]; taxable=nums[1]; taxAmount=nums[2]; total=nums[3];
+      gstRate=paren?num(paren):((taxable>0&&taxAmount>0)?money(taxAmount/taxable*100):0);
+    }else{
+      rate=nums[0]; taxAmount=nums[nums.length-2]; total=nums[nums.length-1];
+      taxable=money(qty*rate);
+      gstRate=paren?num(paren):((taxable>0&&taxAmount>0)?money(taxAmount/taxable*100):0);
+    }
+    if(rate>0&&total>0)addItem(name,hsn,qty,unit,rate,taxable,gstRate,taxAmount,total);
+  }
+
+  const itemTaxableTotal=money(items.reduce((s,x)=>s+Number(x.taxable_value||0),0));
+  const itemTaxTotal=money(items.reduce((s,x)=>s+Number(x.tax_amount||0),0));
+  const itemInvoiceTotal=money(items.reduce((s,x)=>s+Number(x.line_total||0),0));
+  const finalTaxableTotal=taxableTotal||itemTaxableTotal;
+  const finalTaxTotal=taxTotal||itemTaxTotal||((invoiceTotal||itemInvoiceTotal)>finalTaxableTotal?money((invoiceTotal||itemInvoiceTotal)-finalTaxableTotal):0);
+  const finalInvoiceTotal=invoiceTotal||itemInvoiceTotal;
+  return {supplier_name:sellerName,supplier_gstin:sellerGstin,supplier_address:'',buyer_name:buyerName,buyer_gstin:buyerGstin,buyer_pan:buyerPan,seller_pan:sellerPan,seller_phone:'',seller_address:'',seller_state:'',seller_state_code:'',seller_id:sellerPan||sellerGstin||sellerName,buyer_id:buyerGstin||buyerPan||buyerName,invoice_number:invoiceNo,invoice_date:invoiceDate,place_of_supply:pos,challan_number:challanNumber,challan_date:challanDate,eway_bill_number:eway,transport,transport_id:transportId,taxable_total:finalTaxableTotal,tax_total:finalTaxTotal,cgst,sgst,igst,invoice_total:finalInvoiceTotal,items,raw_text:raw};
+}
+module.exports={parseBill};
+,'i');\n  for(const line of lines){\n    const m=line.match(standardRowRe);\n    if(!m)continue;\n    const name=String(m[2]||'').trim();\n    if(!name||/^(?:total|subtotal|grand total|taxable amount|invoice total|sr\\\\.?\\\\s*no|product|description)$/i.test(name))continue;\n    const hsn=m[3], qty=num(m[4]), unit=m[5]||'PCS', rate=num(m[6]), taxable=num(m[7]), gstRate=num(m[8]), total=num(m[9]);\n    if(qty>0&&rate>0){\n      const actualTaxable=taxable>0?taxable:money(qty*rate);\n      const taxAmount=total>actualTaxable?money(total-actualTaxable):0;\n      addItem(name,hsn,qty,unit,rate,actualTaxable,gstRate,taxAmount,total||money(actualTaxable+taxAmount));\n    }\n  }\n\n  // Retail/GST invoice layout: Items | HSN | Quantity | MRP | Rate Per Unit | Tax Per Unit | Amount.
   // HSN is optional because many retail bills omit it. Never invent an HSN when the bill does not contain one.
   const retailRowRe=new RegExp('^(\\d+)\\s+(.+?)\\s+(?:(\\d{3,8}|[-—–])\\s+)?('+NUM+')\\s*([A-Za-z]{1,10})\\s+('+NUM+')\\s+('+NUM+')\\s+('+NUM+')\\s*(?:\\(([0-9]+(?:\\.[0-9]+)?)\\))?\\s+('+NUM+')$','i');
   for(const line of lines){
