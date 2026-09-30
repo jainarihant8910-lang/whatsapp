@@ -1132,7 +1132,8 @@ function createWhatsAppClient() {
 
                 const sender =
                     await db.findSenderByPhone(
-                        senderPhone
+                        senderPhone,
+                        WHATSAPP_BUSINESS_ID
                     );
 
                 if (!sender) {
@@ -1222,6 +1223,9 @@ function createWhatsAppClient() {
                         body,
 
                         senderPhone,
+
+                        businessId:
+                            WHATSAPP_BUSINESS_ID,
 
                         items:
                             deliveries
