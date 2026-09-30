@@ -55,12 +55,15 @@ function parseBill(text){
     const re=new RegExp('\\b'+label+'\\b','i');
     for(let i=0;i<lines.length;i++){
       if(!re.test(lines[i]))continue;
-      const window=lines.slice(i,Math.min(lines.length,i+4)).join(' ');
-      const nums=[...window.matchAll(/(?:₹|Rs\\.?|INR)?\\s*(\\d[\\d,]*(?:\\.\\d+)?)/gi)].map(m=>num(m[1]));
-      const perc=[...window.matchAll(/(\\d+(?:\\.\\d+)?)\\s*%/g)].map(m=>num(m[1]));
-      const rate=perc.length?perc[0]:0;
-      const amount=nums.length?nums[nums.length-1]:0;
-      return {rate,amount};
+      const same=lines[i];
+      const perc=[...same.matchAll(/(\\d+(?:\\.\\d+)?)\\s*%/g)].map(m=>num(m[1]));
+      const nums=[...same.matchAll(/(?:₹|Rs\\.?|INR)?\\s*(\\d[\\d,]*(?:\\.\\d+)?)/gi)].map(m=>num(m[1]));
+      if(nums.length)return {rate:perc[0]||0,amount:nums[nums.length-1]};
+      for(let j=i+1;j<Math.min(lines.length,i+3);j++){
+        if(/^(?:CGST|SGST|IGST)\\b/i.test(lines[j]))break;
+        if(/^\\d[\\d,.]*$/.test(lines[j]))return {rate:perc[0]||0,amount:num(lines[j])};
+      }
+      return {rate:perc[0]||0,amount:0};
     }
     return {rate:0,amount:0};
   };
@@ -199,16 +202,20 @@ function parseBill(text){
     }
     if(nums.length<2)return false;
 
-    // The final amount is normally the line total. If taxable value is present,
-    // derive unit purchase rate from it; this survives missing/garbled rate cells.
+    // In flattened GST OCR, rate and taxable value are the numeric values before the first GST %.
     const total=nums[nums.length-1];
+    const firstPercentIndex=tail.search(/\\d+(?:\\.\\d+)?\\s*%/);
+    const beforeGst=firstPercentIndex>=0
+      ? [...tail.slice(0,firstPercentIndex).matchAll(/\\d[\\d,]*(?:\\.\\d+)?/g)].map(m=>num(m[0]))
+      : nums.slice(0,-1);
     let taxable=0, rate=0, taxAmount=0;
-    if(nums.length>=3){
-      taxable=nums[nums.length-2];
-      if(taxable>total)taxable=0;
+    if(beforeGst.length>=2){
+      rate=beforeGst[beforeGst.length-2];
+      taxable=beforeGst[beforeGst.length-1];
+    }else if(beforeGst.length===1){
+      taxable=beforeGst[0];
+      rate=money(taxable/q);
     }
-    if(!(taxable>0)&&nums.length>=2)taxable=nums[nums.length-2];
-    if(taxable>0)rate=money(taxable/q);
     if(!(rate>0)&&nums.length>=2)rate=nums[0];
     if(!(rate>0))return false;
     if(total>taxable)taxAmount=money(total-taxable);
