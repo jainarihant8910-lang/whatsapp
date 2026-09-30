@@ -62,8 +62,11 @@ function parseBill(text){
       if(sameNums.length)return {rate:perc[0]||0,amount:sameNums[sameNums.length-1]};
       const nums=[...window.matchAll(/(?:₹|Rs\.?|INR)?\s*(\d[\d,]*(?:\.\d+)?)/gi)].map(m=>num(m[1]));
       if(nums.length)return {rate:perc[0]||0,amount:nums[0]};
+      return {rate:perc[0]||0,amount:0};
+    }
     return {rate:0,amount:0};
   };
+
   const ig=gstSummary('IGST');
   const cg=gstSummary('CGST');
   const sg=gstSummary('SGST');
