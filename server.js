@@ -444,7 +444,9 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
         }
         const altText=passes.join('\\n\\n');
         const altParsed=parseBill(altText);
-        if(altParsed.items.length>parsed.items.length){
+        // Every OCR pass can recover different rows. Never discard a pass just
+        // because it has the same/lower row count: merge all unique rows.
+        if(altParsed.items.length){
           parsed=mergePurchaseParses(parsed,altParsed);
           parsed={...parsed,
             supplier_name:altParsed.supplier_name||parsed.supplier_name,
