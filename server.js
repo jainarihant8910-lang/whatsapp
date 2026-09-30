@@ -7,6 +7,20 @@ async function auth(req,res,next){try{const s=await db.session(cookieToken(req))
 function csrf(req,res,next){if(['GET','HEAD','OPTIONS'].includes(req.method))return next();const c=String(req.headers['x-csrf-token']||'');if(!c)return res.status(403).json({error:'CSRF token missing'});db.get('SELECT csrf_hash FROM sessions WHERE token_hash=?',[crypto.createHash('sha256').update(cookieToken(req)).digest('hex')]).then(s=>{if(!s||s.csrf_hash!==crypto.createHash('sha256').update(c).digest('hex'))return res.status(403).json({error:'Invalid CSRF token'});next()}).catch(e=>res.status(500).json({error:e.message}))}
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:25*1024*1024},fileFilter:(r,f,cb)=>cb(null,['application/pdf','image/jpeg','image/png','image/webp'].includes(f.mimetype))});
 function hash(buf){return crypto.createHash('sha256').update(buf).digest('hex')}
+function normalizeImageForOcr(buf){
+  return new Promise((resolve,reject)=>{
+    const p=spawn('convert',['-','-auto-orient','-resize','2200x2200>','-colorspace','Gray','-contrast-stretch','0x8%','-sharpen','0x1','-quality','82','jpg:-'],{stdio:['pipe','pipe','pipe']});
+    const out=[]; const err=[];
+    p.stdout.on('data',x=>out.push(x));
+    p.stderr.on('data',x=>err.push(x));
+    p.on('error',reject);
+    p.on('close',(code)=>{
+      if(code===0&&Buffer.concat(out).length)return resolve(Buffer.concat(out));
+      reject(new Error(String(Buffer.concat(err).toString()||'Image normalization failed')));
+    });
+    p.stdin.end(buf);
+  });
+}
 let paddleWorker=null;
 let paddleWorkerBuffer='';
 let paddleRequestId=0;
@@ -109,23 +123,32 @@ async function ocrSpaceOcr(buf,mimeType='image/png'){
 
 async function ocrImage(buf,mimeType='image/png'){
   const opts={logger:x=>{if(x.status==='recognizing text'&&Math.round((x.progress||0)*100)%20===0)console.log('Tesseract OCR',Math.round((x.progress||0)*100)+'%')}};
+  let normalized=null;
 
-  // Primary OCR: OCR.space Engine 3 with table/receipt mode. Engine 3 is
-  // specifically designed for tables and returns table text in reading order.
+  // First try the original image so high-resolution bills retain maximum detail.
   try{
     const apiText=await ocrSpaceOcr(buf,mimeType);
     if(apiText&&apiText.trim().length>=8)return apiText;
   }catch(e){
-    console.log('OCR.space unavailable/failed; using local OCR fallback:',e.message);
+    console.log('OCR.space original image failed:',e.message);
   }
 
-  // Local fallback keeps the application usable if the API key is missing,
-  // the API is temporarily unavailable, or the request is rejected.
+  // Phone-camera images are often too large for OCR.space. Normalize them to
+  // an auto-oriented, high-contrast JPEG and retry automatically.
   try{
-    const r=await Tesseract.recognize(buf,'eng',{...opts,tessedit_pageseg_mode:'4'});
+    normalized=await normalizeImageForOcr(buf);
+    const apiText=await ocrSpaceOcr(normalized,'image/jpeg');
+    if(apiText&&apiText.trim().length>=8)return apiText;
+  }catch(e){
+    console.log('OCR.space normalized image failed:',e.message);
+  }
+
+  const source=normalized||buf;
+  try{
+    const r=await Tesseract.recognize(source,'eng',{...opts,tessedit_pageseg_mode:'4',preserve_interword_spaces:'1'});
     return r.data.text||'';
   }catch(e){
-    const r=await Tesseract.recognize(buf,'eng',opts);
+    const r=await Tesseract.recognize(source,'eng',opts);
     return r.data.text||'';
   }
 }
