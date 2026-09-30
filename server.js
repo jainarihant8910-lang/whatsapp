@@ -431,6 +431,41 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
       }catch(e){console.error('OCR.space PDF processing failed; trying local rendered-page OCR:',e.message)}
     }
 
+    // Image invoices need the same multi-pass treatment as PDFs. A single OCR
+    // layout can miss rows or the GST footer even when the image is perfectly readable.
+    if(r.file.mimetype!=='application/pdf' && parsed.items.length<10){
+      try{
+        const passes=[];
+        for(const psm of ['6','11']){
+          try{
+            const tr=await Tesseract.recognize(r.file.buffer,'eng',{tessedit_pageseg_mode:psm});
+            if(tr.data.text&&tr.data.text.trim())passes.push('[TESSERACT PSM '+psm+']\\n'+tr.data.text);
+          }catch(e){console.error('Image Tesseract PSM '+psm+' failed:',e.message)}
+        }
+        const altText=passes.join('\\n\\n');
+        const altParsed=parseBill(altText);
+        if(altParsed.items.length>parsed.items.length){
+          parsed=mergePurchaseParses(parsed,altParsed);
+          parsed={...parsed,
+            supplier_name:altParsed.supplier_name||parsed.supplier_name,
+            supplier_gstin:altParsed.supplier_gstin||parsed.supplier_gstin,
+            buyer_name:altParsed.buyer_name||parsed.buyer_name,
+            buyer_gstin:altParsed.buyer_gstin||parsed.buyer_gstin,
+            invoice_number:altParsed.invoice_number||parsed.invoice_number,
+            invoice_date:altParsed.invoice_date||parsed.invoice_date,
+            taxable_total:altParsed.taxable_total||parsed.taxable_total,
+            tax_total:altParsed.tax_total||parsed.tax_total,
+            cgst:altParsed.cgst||parsed.cgst,
+            sgst:altParsed.sgst||parsed.sgst,
+            igst:altParsed.igst||parsed.igst,
+            invoice_total:altParsed.invoice_total||parsed.invoice_total,
+            raw_text:text+'\\n\\n[IMAGE MULTI-PASS OCR]\\n'+altText
+          };
+          text=parsed.raw_text;
+        }
+      }catch(e){console.error('Image multi-pass OCR failed:',e.message)}
+    }
+
     if(!parsed.items.length)return s.status(422).json({
       error:'The bill could be read, but the product table could not be identified. No stock was changed. Try the original PDF or a clear image of the full bill.'
     });
