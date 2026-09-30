@@ -15,7 +15,7 @@ must(database, /async function claimConfirmation\\(orderId\\)/, 'Missing databas
 must(database, /confirmation_sent = 2/, 'Missing confirmation sending state.');
 if (!database.includes('Number(item.current_stock) !== 0')) throw new Error('Delete guard must require zero stock.');
 must(server, /db\\.deleteItem\\(num\\(req\\.params\\.id\\), req\\.auth\\.businessId\\)/, 'Delete API is not using the guarded database method.');
-must(server, /COALESCE\\(i\\.name,'Deleted product #'/, 'Transaction history does not handle deleted products.');
+if (!server.includes("COALESCE(i.name,'Deleted product #'")) throw new Error('Transaction history does not handle deleted products.');
 must(app, /deleteProduct\\(x\\.id\\)/, 'Zero-stock delete button is missing.');
 must(app, /Number\\(x\\.current_stock\\)===0/, 'Delete button is not restricted to zero stock.');
 console.log('Static regression checks passed.');
