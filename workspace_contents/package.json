@@ -4,7 +4,16 @@
   "description": "WhatsApp delivery messages to Google Sheets",
   "main": "index.js",
   "scripts": {
-    "start": "node run.js"
+    "start": "node run.js",
+    "server": "node server.js",
+    "whatsapp": "node index.js",
+    "check": "npm run test:syntax && npm run test:static",
+    "test:syntax": "node tests/syntax.test.js",
+    "test:static": "node tests/static.test.js",
+    "test": "node tests/static.test.js",
+    "test:all": "npm run check",
+    "test:parser": "node tests/static.test.js",
+    "test:soak": "node tests/soak.test.js"
   },
   "dependencies": {
     "axios": "^1.20.0",
