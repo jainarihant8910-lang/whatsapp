@@ -328,7 +328,7 @@ function parseBill(text){
   for(const line of lines){
     // If the dedicated retail parser already recognizes this row, do not let
     // the loose fallback reinterpret the same numeric columns.
-    if(retailRowRe.test(line))continue;
+    if(retailRowRe.test(line)||/\\([0-9]+(?:\\.[0-9]+)?\\)/.test(line))continue;
     const head=line.match(/^(\\d{1,4})[.)]?\\s+(.+?)\\s+(?:(\\d{3,8})\\s+)?(\\d+(?:[.,]\\d+)?)\\s*([A-Za-z]{1,10})\\s+(.+)$/);
     if(!head)continue;
     const name=String(head[2]||'').trim();
