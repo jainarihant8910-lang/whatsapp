@@ -1,0 +1,21 @@
+const fs = require('fs');
+const path = require('path');
+const root = path.join(__dirname, '..');
+const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const index = read('index.js');
+const database = read('database.js');
+const server = read('server.js');
+const app = read('public/app.js');
+function must(text, pattern, message) { if (!pattern.test(text)) throw new Error(message); }
+must(index, /inFlightMessageIds/, 'Missing in-flight WhatsApp duplicate guard.');
+must(index, /claimConfirmation\\(order\\.id\\)/, 'Missing atomic confirmation claim.');
+must(index, /handleStockCommand\\(\\s*message,\\s*WHATSAPP_BUSINESS_ID/s, 'Stock command is not business-scoped.');
+must(index, /📦 \\*CURRENT STOCK\\*/, 'Stock reply heading was not normalized.');
+must(database, /async function claimConfirmation\\(orderId\\)/, 'Missing database confirmation claim.');
+must(database, /confirmation_sent = 2/, 'Missing confirmation sending state.');
+must(database, /current_stock\\) !== 0/, 'Delete guard must require zero stock.');
+must(server, /db\\.deleteItem\\(num\\(req\\.params\\.id\\), req\\.auth\\.businessId\\)/, 'Delete API is not using the guarded database method.');
+must(server, /COALESCE\\(i\\.name,'Deleted product #'/, 'Transaction history does not handle deleted products.');
+must(app, /deleteProduct\\(x\\.id\\)/, 'Zero-stock delete button is missing.');
+must(app, /Number\\(x\\.current_stock\\)===0/, 'Delete button is not restricted to zero stock.');
+console.log('Static regression checks passed.');
