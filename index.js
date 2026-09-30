@@ -10,6 +10,8 @@ const puppeteer = require('puppeteer');
 
 const AUTH_ROOT = path.join(__dirname, '.wwebjs_auth');
 const clients = new Map();
+const inFlightMessageIds = new Set();
+const inFlightStockMessageIds = new Set();
 const starting = new Set();
 const retries = new Map();
 const generations = new Map();
@@ -366,7 +368,16 @@ async function startBusiness(businessId, force = false) {
         chars: body.length
       });
 
-      // Stock enquiry format is exactly two lines:
+      // Stock enquiry formats:
+      //   stock
+      //   stock\n<product name>
+      // A bare "stock" returns the complete inventory. A product query returns
+      // only that product. Stock queries never create orders or change stock.
+      const stockLines = body.replace(/^\uFEFF/,'').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+      const isStockQuery = stockLines.length === 1 && stockLines[0].toLowerCase() === 'stock';
+      const isProductStockQuery = stockLines.length === 2 && stockLines[0].toLowerCase() === 'stock';
+      if (isStockQuery || isProductStockQuery) {
+        const stockMessageId = message.id?._serialized || message.id?.      // Stock enquiry format is exactly two lines:
       // stock
       // <product name>
       // It must never create an order or change stock.
@@ -421,9 +432,126 @@ async function startBusiness(businessId, force = false) {
           console.error('WhatsApp stock reply failed:', e.message);
         }
         return;
+      } || message.id?.id || '';
+        const stockKey = businessId + ':' + (stockMessageId || from + ':' + body);
+        if (inFlightStockMessageIds.has(stockKey)) return;
+        inFlightStockMessageIds.add(stockKey);
+        try {
+          const claimed = await db.claimProcessedMessage(businessId,stockMessageId,from,'',body);
+          if (stockMessageId && !claimed) return;
+          const productName = isProductStockQuery ? stockLines[1] : '';
+          const products = productName
+            ? await db.all('SELECT name, unit, current_stock, minimum_stock FROM items WHERE business_id=? AND name=? COLLATE NOCASE',[businessId,productName])
+            : await db.all('SELECT name, unit, current_stock, minimum_stock FROM items WHERE business_id=? ORDER BY name',[businessId]);
+          const senderPhone = await phone(message, client, businessId);
+          if (!senderPhone) {
+            await db.setWa(businessId, 'CONNECTED', 'Stock enquiry received, but WhatsApp did not expose the sender phone number.', null).catch(() => {});
+            console.log('WhatsApp stock enquiry ignored: could not resolve sender phone from', from);
+            return;
+          }
+          const allowed = await db.sender(businessId, senderPhone);
+          console.log('WhatsApp stock enquiry sender resolved:', senderPhone, 'allowed:', !!allowed);
+          if (!allowed) {
+            await db.setWa(businessId, 'CONNECTED', 'Stock enquiry received from an unapproved number. No stock information was sent.', null).catch(() => {});
+            console.log('WhatsApp stock enquiry ignored: sender not allowed', senderPhone);
+            return;
+          }
+          let reply;
+          if (productName) {
+            const product = products[0];
+            reply = product
+              ? '📦 *CURRENT STOCK*\n\n*Product:* ' + product.name +
+                '\n*Available:* ' + Number(product.current_stock || 0) + ' ' + (product.unit || 'PCS') +
+                '\n*Minimum:* ' + Number(product.minimum_stock || 0) + ' ' + (product.unit || 'PCS') +
+                '\n*Status:* ' + (Number(product.current_stock || 0) <= Number(product.minimum_stock || 0) ? '⚠️ LOW STOCK' : '✅ IN STOCK')
+              : '📦 *CURRENT STOCK*\n\n❌ Product not found: ' + productName;
+          } else {
+            reply = '📦 *CURRENT STOCK*\n\n' +
+              (products.length
+                ? products.map(p => '• *' + p.name + '* — ' + Number(p.current_stock || 0) + ' ' + (p.unit || 'PCS') + (Number(p.current_stock || 0) <= Number(p.minimum_stock || 0) ? ' ⚠️ LOW' : '')).join('\n')
+                : 'No products are currently in stock.') +
+              '\n\nUpdated: ' + new Date().toLocaleString('en-IN');
+          }
+          try {
+            const sent = await client.sendMessage(from,reply);
+            if(!sent) throw new Error('WhatsApp returned no sent message');
+            await db.setWa(businessId,'CONNECTED','Stock enquiry answered.',null).catch(()=>{});
+            console.log('WhatsApp stock reply sent for',productName || 'all products',sent?.id?._serialized||'');
+          } catch (e) {
+            await db.setWa(businessId, 'CONNECTED', 'Stock enquiry received, but reply failed: ' + e.message, null).catch(() => {});
+            console.error('WhatsApp stock reply failed:', e.message);
+          }
+        } finally {
+          inFlightStockMessageIds.delete(stockKey);
+        }
+        return;
       }
 
-      const parsed = parse(body);
+      const whatsappMessageId =
+        message.id?._serialized ||
+        message.id?.      // Stock enquiry format is exactly two lines:
+      // stock
+      // <product name>
+      // It must never create an order or change stock.
+      const stockLines = body.replace(/^\uFEFF/,'').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+      if (stockLines.length === 2 && stockLines[0].toLowerCase() === 'stock') {
+        const stockMessageId = message.id?._serialized || message.id?.$1 || message.id?.id || '';
+        if (stockMessageId) {
+          const claim = await db.run(
+            'INSERT OR IGNORE INTO processed_messages(business_id,message_id,whatsapp_from,sender_phone,body) VALUES(?,?,?,?,?)',
+            [businessId,stockMessageId,from,'','[STOCK QUERY]']
+          );
+          if (Number(claim.changes||0)!==1) return;
+        }
+        const productName = stockLines[1];
+        const product = await db.get(
+          'SELECT name, sku, hsn_code, unit, current_stock, minimum_stock, purchase_price FROM items WHERE business_id=? AND name=? COLLATE NOCASE',
+          [businessId, productName]
+        );
+
+        const senderPhone = await phone(message, client, businessId);
+        if (!senderPhone) {
+          await db.setWa(businessId, 'CONNECTED', 'Stock enquiry received, but WhatsApp did not expose the sender phone number.', null).catch(() => {});
+          console.log('WhatsApp stock enquiry ignored: could not resolve sender phone from', from);
+          return;
+        }
+
+        const allowed = await db.sender(businessId, senderPhone);
+        console.log('WhatsApp stock enquiry sender resolved:', senderPhone, 'allowed:', !!allowed);
+        if (!allowed) {
+          await db.setWa(businessId, 'CONNECTED', 'Stock enquiry received from an unapproved number. No stock information was sent.', null).catch(() => {});
+          console.log('WhatsApp stock enquiry ignored: sender not allowed', senderPhone);
+          return;
+        }
+
+        const reply = product
+          ? '📦 STOCK\\n\\nProduct: ' + product.name +
+            '\\nAvailable: ' + Number(product.current_stock || 0) + ' ' + (product.unit || 'PCS') +
+            '\\nMinimum Stock: ' + Number(product.minimum_stock || 0) + ' ' + (product.unit || 'PCS') +
+            '\\nStatus: ' + (Number(product.current_stock || 0) <= Number(product.minimum_stock || 0) ? 'LOW STOCK' : 'IN STOCK')
+          : '📦 STOCK\\n\\nProduct: ' + productName + '\\nStatus: PRODUCT NOT FOUND';
+
+        try {
+          let sent=null;
+          try { sent=await message.reply(reply); } catch(replyError) { console.error('Stock Message#reply failed:',replyError.message); }
+          if(!sent){ try { sent=await client.sendMessage(from,reply); } catch(sendError) { console.error('Stock direct send failed:',sendError.message); } }
+          if(!sent){ try { const chat=await message.getChat(); sent=await chat.sendMessage(reply); } catch(chatError) { console.error('Stock chat send failed:',chatError.message); } }
+          if(!sent)throw new Error('WhatsApp returned no sent message');
+          await db.setWa(businessId,'CONNECTED','Stock enquiry answered for '+productName+'.',null).catch(()=>{});
+          console.log('WhatsApp stock reply sent for',productName,sent?.id?._serialized||'');
+        } catch (e) {
+          await db.setWa(businessId, 'CONNECTED', 'Stock enquiry received, but reply failed: ' + e.message, null).catch(() => {});
+          console.error('WhatsApp stock reply failed:', e.message);
+        }
+        return;
+      } ||
+        message.id?.id ||
+        '';
+      const incomingKey = businessId + ':' + (whatsappMessageId || from + ':' + body);
+      if (inFlightMessageIds.has(incomingKey)) return;
+      inFlightMessageIds.add(incomingKey);
+      try {
+        const parsed = parse(body);
       if (!parsed) {
         await db.setWa(businessId, 'CONNECTED', 'Message received, but it does not match: Delivered To on line 1, then quantity + item on each next line.', null).catch(() => {});
         console.log('WhatsApp message ignored: invalid order format');
@@ -445,11 +573,6 @@ async function startBusiness(businessId, force = false) {
         return;
       }
 
-      const whatsappMessageId =
-        message.id?._serialized ||
-        message.id?.$1 ||
-        message.id?.id ||
-        '';
       if (!whatsappMessageId) {
         await db.setWa(businessId, 'CONNECTED', 'Message received, but WhatsApp did not provide a message ID.', null).catch(() => {});
         console.log('WhatsApp message ignored: missing message ID');
@@ -516,6 +639,8 @@ async function startBusiness(businessId, force = false) {
         await db.confirmationPending(businessId, order.id);
         await db.setWa(businessId, 'CONNECTED', 'Order #' + order.id + ' saved, but confirmation failed: ' + e.message, null).catch(() => {});
         console.error('Confirmation failed for order', order.id + ':', e.message);
+      } finally {
+        inFlightMessageIds.delete(incomingKey);
       }
     } catch (e) {
       console.error('WhatsApp message error:', e);
