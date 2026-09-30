@@ -359,7 +359,26 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
         // page into an image and then trying to reconstruct columns.
         console.log('Purchase OCR: sending original PDF to OCR.space Engine '+String(process.env.OCR_SPACE_ENGINE||'3'));
         const ocrText=await ocrSpaceOcr(r.file.buffer,'application/pdf');
-        const ocrParsed=parseBill(ocrText);
+        let ocrParsed=parseBill(ocrText);
+        // A PDF OCR response can be partial. When it recovers suspiciously few
+        // rows, OCR each rendered page separately and keep the result with the
+        // most product rows.
+        if(ocrParsed.items.length < Math.max(3, parsed.items.length)){
+          try{
+            const pdfScan=await pdfInfoAndScreenshots(r.file.buffer);
+            const pageTexts=[];
+            for(let i=0;i<pdfScan.pages.length;i++){
+              try{
+                const pageText=await ocrSpaceOcr(pdfScan.pages[i],'image/png');
+                if(pageText&&pageText.trim())pageTexts.push('[PAGE '+(i+1)+']\n'+pageText);
+              }catch(e){console.error('Purchase OCR.space page '+(i+1)+' failed:',e.message)}
+            }
+            const pageOcrText=pageTexts.join('\n\n');
+            const pageParsed=parseBill(pageOcrText);
+            if(pageParsed.items.length>ocrParsed.items.length)ocrParsed=pageParsed;
+            ocrText=ocrText+'\n\n[OCR.SPACE PAGE OCR]\n'+pageOcrText;
+          }catch(e){console.error('Purchase page-by-page OCR failed:',e.message)}
+        }
         if(ocrParsed.items.length){
           parsed=mergePurchaseParses(parsed,ocrParsed); parsed={...parsed,
             supplier_name:ocrParsed.supplier_name||parsed.supplier_name,
@@ -374,10 +393,10 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
             sgst:ocrParsed.sgst||parsed.sgst,
             igst:ocrParsed.igst||parsed.igst,
             invoice_total:ocrParsed.invoice_total||parsed.invoice_total,
-            raw_text:text+'\\n\\n[OCR.SPACE TABLE OCR]\n'+ocrText
+            raw_text:text+'\n\n[OCR.SPACE TABLE OCR]\n'+ocrText
           };
           text=parsed.raw_text;
-        }else{
+        }
           console.log('OCR.space returned text but no product rows parsed; trying local rendered-page fallback');
           const pdfScan=await pdfInfoAndScreenshots(r.file.buffer);
           const chunks=[];
