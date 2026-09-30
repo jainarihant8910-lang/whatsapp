@@ -86,7 +86,7 @@ async function ocrSpaceOcr(buf,mimeType='image/png'){
   form.append('file',new Blob([buf],{type:mimeType}),mimeType==='application/pdf'?'bill.pdf':'bill');
   form.append('language',process.env.OCR_SPACE_LANGUAGE||'auto');
   form.append('isTable',String(process.env.OCR_SPACE_TABLE||'true'));
-  form.append('OCREngine',String(process.env.OCR_SPACE_ENGINE||'3'));
+  form.append('OCREngine',String(engine));
   form.append('isOverlayRequired','false');
   form.append('scale','true');
   form.append('detectOrientation','true');
@@ -109,7 +109,7 @@ async function ocrSpaceOcr(buf,mimeType='image/png'){
   return text;
 }
 
-async function ocrSpaceOcrWithTableMode(buf,mimeType='image/png',tableMode='true'){
+async function ocrSpaceOcrWithTableMode(buf,mimeType='image/png',tableMode='true',engine=process.env.OCR_SPACE_ENGINE||'3'){
   const apiKey=String(process.env.OCR_SPACE_API_KEY||'').trim();
   if(!apiKey)throw new Error('OCR_SPACE_API_KEY is not configured');
   const form=new FormData();
@@ -138,12 +138,13 @@ async function ocrImage(buf,mimeType='image/png'){
   // Run OCR.space in both normal and table modes. Table mode is useful for
   // invoices, but it can be worse on ordinary camera photos, so never accept
   // it as the only OCR result.
-  for(const tableMode of ['true','false']){
+  const apiPasses=[{tableMode:'true',engine:'3'},{tableMode:'false',engine:'2'}];
+  for(const pass of apiPasses){
     try{
-      const apiText=await ocrSpaceOcrWithTableMode(buf,mimeType,tableMode);
+      const apiText=await ocrSpaceOcrWithTableMode(buf,mimeType,pass.tableMode,pass.engine);
       if(apiText&&apiText.trim().length>=8)results.push(apiText);
     }catch(e){
-      console.log('OCR.space image '+(tableMode==='true'?'table':'plain')+' failed:',e.message);
+      console.log('OCR.space image '+(pass.tableMode==='true'?'table':'plain')+' Engine '+pass.engine+' failed:',e.message);
     }
   }
   // Local OCR is always run as a fallback/second opinion for images. This is
