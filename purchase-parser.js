@@ -52,12 +52,12 @@ function parseBill(text){
   // OCR may place the percentage and amount on separate lines, so inspect
   // nearby lines instead of requiring the amount to be on the same line.
   const gstSummary=(label)=>{
-    const re=new RegExp('\\\\b'+label+'\\\\b','i');
+    const re=new RegExp('\\b'+label+'\\b','i');
     for(let i=0;i<lines.length;i++){
       if(!re.test(lines[i]))continue;
       const window=lines.slice(i,Math.min(lines.length,i+4)).join(' ');
-      const nums=[...window.matchAll(/(?:₹|Rs\\\\.?|INR)?\\\\s*(\\\\d[\\\\d,]*(?:\\\\.\\\\d+)?)/gi)].map(m=>num(m[1]));
-      const perc=[...window.matchAll(/(\\\\d+(?:\\\\.\\\\d+)?)\\\\s*%/g)].map(m=>num(m[1]));
+      const nums=[...window.matchAll(/(?:₹|Rs\\.?|INR)?\\s*(\\d[\\d,]*(?:\\.\\d+)?)/gi)].map(m=>num(m[1]));
+      const perc=[...window.matchAll(/(\\d+(?:\\.\\d+)?)\\s*%/g)].map(m=>num(m[1]));
       const rate=perc.length?perc[0]:0;
       const amount=nums.length?nums[nums.length-1]:0;
       return {rate,amount};
