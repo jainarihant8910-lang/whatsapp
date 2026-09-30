@@ -330,7 +330,7 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
         // additional products on later pages. For multi-page bills we OCR every
         // rendered page and merge it with the native PDF text.
         // For a one-page bill OCR is used only when native extraction found no rows.
-        const shouldOcr=!parsed.items.length || pdfScan.pages.length>1;
+        const shouldOcr=pdfScan.pages.length>0;
         if(shouldOcr){
           const chunks=[];
           for(let i=0;i<pdfScan.pages.length;i++){
@@ -355,9 +355,38 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
                 sgst:ocrParsed.sgst||parsed.sgst,
                 igst:ocrParsed.igst||parsed.igst,
                 invoice_total:ocrParsed.invoice_total||parsed.invoice_total,
-                raw_text:text+'\\n\\n[OCR FALLBACK - ALL PAGES]\\n'+ocrText
+                raw_text:text+'\\n\\n[OCR FALLBACK - PADDLE ALL PAGES]\\n'+ocrText
               };
               text=parsed.raw_text;
+            }else{
+              console.log('PaddleOCR text found but no product rows parsed; trying Tesseract table fallback');
+              const tesseractChunks=[];
+              for(let i=0;i<pdfScan.pages.length;i++){
+                try{
+                  const tr=await Tesseract.recognize(pdfScan.pages[i],'eng',{tessedit_pageseg_mode:'6'});
+                  if(tr.data.text&&tr.data.text.trim())tesseractChunks.push('[PAGE '+(i+1)+']\\n'+tr.data.text);
+                }catch(e){console.error('Purchase PDF Tesseract fallback failed on page '+(i+1)+':',e.message)}
+              }
+              const tesseractText=tesseractChunks.join('\\n\\n');
+              const tesseractParsed=parseBill(tesseractText);
+              if(tesseractParsed.items.length){
+                parsed=mergePurchaseParses(parsed,tesseractParsed); parsed={...parsed,
+                  supplier_name:tesseractParsed.supplier_name||parsed.supplier_name,
+                  supplier_gstin:tesseractParsed.supplier_gstin||parsed.buyer_gstin,
+                  buyer_name:tesseractParsed.buyer_name||parsed.buyer_name,
+                  buyer_gstin:tesseractParsed.buyer_gstin||parsed.buyer_gstin,
+                  invoice_number:tesseractParsed.invoice_number||parsed.invoice_number,
+                  invoice_date:tesseractParsed.invoice_date||parsed.invoice_date,
+                  taxable_total:tesseractParsed.taxable_total||parsed.taxable_total,
+                  tax_total:tesseractParsed.tax_total||parsed.tax_total,
+                  cgst:tesseractParsed.cgst||parsed.cgst,
+                  sgst:tesseractParsed.sgst||parsed.sgst,
+                  igst:tesseractParsed.igst||parsed.igst,
+                  invoice_total:tesseractParsed.invoice_total||parsed.invoice_total,
+                  raw_text:text+'\\n\\n[OCR FALLBACK - PADDLE]\\n'+ocrText+'\\n\\n[OCR FALLBACK - TESSERACT]\\n'+tesseractText
+                };
+                text=parsed.raw_text;
+              }
             }
           }
         }
