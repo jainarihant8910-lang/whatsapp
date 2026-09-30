@@ -84,6 +84,53 @@ function parseBill(text){
     items.push({name,supplier_sku:'',sku:makeSku(name,hsn),hsn_code:hsn,quantity:q,unit:String(unit||'PCS').toUpperCase(),purchase_price:rate,gst_rate:Number(gstRate||0),taxable_value:taxable||money(q*rate),tax_amount:taxAmount||0,line_total:lineTotal||money((taxable||money(q*rate))+(taxAmount||0))});
   };
 
+  // OCR.space Engine 3 with table mode can return invoice rows as Markdown.
+  // Parse those rows before the flattened-text heuristics so the table structure
+  // is preserved instead of being lost when columns are joined together.
+  const markdownLines=lines.filter(l=>l.includes('|'));
+  if(markdownLines.length>=2){
+    const headerIndex=markdownLines.findIndex(l=>/product|item|description|particular|name/i.test(l) && /qty|quantity|rate|amount|price/i.test(l));
+    if(headerIndex>=0){
+      const header=markdownLines[headerIndex].split('|').map(x=>x.trim().toLowerCase()).filter(Boolean);
+      const separator=/^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(markdownLines[headerIndex+1]||'');
+      if(separator){
+        const col=(patterns)=>{
+          for(const p of patterns){const i=header.findIndex(h=>p.test(h));if(i>=0)return i}
+          return -1;
+        };
+        const nameCol=col([/product|item|description|particular|name/]);
+        const qtyCol=col([/^qty$|quantity/]);
+        const unitCol=col([/^unit$|uom/]);
+        const hsnCol=col([/hsn|sac/]);
+        const rateCol=col([/^rate$|price|unit price/]);
+        const taxableCol=col([/taxable/]);
+        const gstCol=col([/gst|tax %|tax rate/]);
+        const taxCol=col([/^tax$|tax amount/]);
+        const totalCol=col([/^amount$|total|net amount|line total/]);
+        for(let i=headerIndex+2;i<markdownLines.length;i++){
+          const cells=markdownLines[i].split('|').map(x=>x.trim());
+          if(cells.length<Math.max(header.length,3)||/^[-:|\s]+$/.test(markdownLines[i]))continue;
+          const get=j=>j>=0&&j<cells.length?cells[j]:'';
+          const name=clean(get(nameCol));
+          if(!name||/^(total|subtotal|grand total|tax|invoice|amount)$/i.test(name))continue;
+          const qty=num(get(qtyCol));
+          if(!(qty>0))continue;
+          const unit=get(unitCol)||'PCS';
+          const hsn=clean(get(hsnCol));
+          const rate=money(get(rateCol));
+          if(!(rate>0))continue;
+          const taxable=money(get(taxableCol))||money(qty*rate);
+          const taxAmount=money(get(taxCol));
+          let gstRate=money(get(gstCol));
+          if(gstRate>100&&taxAmount<=100)gstRate=0;
+          if(!gstRate&&taxAmount>0&&taxable>0)gstRate=money(taxAmount/taxable*100);
+          const total=money(get(totalCol))||money(taxable+taxAmount);
+          addItem(name,hsn,qty,unit,rate,taxable,gstRate,taxAmount,total);
+        }
+      }
+    }
+  }
+
   // Product extraction is intentionally based on the flattened table stream.
   // This handles both PDFs that keep rows on separate lines and PDFs that flatten
   // every cell into one line. Comma-formatted money such as 2,535.00 is supported.
