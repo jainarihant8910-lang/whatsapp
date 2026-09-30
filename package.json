@@ -6,13 +6,14 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check database.js && node --check platform-db.js && node --check purchase-parser.js && node --check purchase-parser.test.js && node --check server.js && node --check index.js && node --check public/app.js",
+    "check": "node regression-test.js && node --check database.js && node --check platform-db.js && node --check purchase-parser.js && node --check purchase-parser.test.js && node --check server.js && node --check index.js && node --check public/app.js",
     "test": "node smoke-test.js",
     "test:qr": "node qr-stress-test.js",
     "test:all": "npm run check && npm run test:parser && npm test && npm run test:qr",
     "test:parser": "node purchase-parser.test.js",
     "test:soak": "node soak-test.js",
-    "setup:ocr": "python3 -m pip install -r requirements-ocr.txt"
+    "setup:ocr": "python3 -m pip install -r requirements-ocr.txt",
+    "test:regression": "node regression-test.js"
   },
   "engines": {
     "node": ">=22"
