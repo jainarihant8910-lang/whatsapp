@@ -58,4 +58,18 @@ const retailText=[
   assert.strictEqual(p.invoice_total,258.13);
 }
 
+{
+  const ocrFlattened=[
+    'Name of Product / Service HSN Qty Unit Rate Taxable GST Tax Total',
+    '1 Bosch Drill Machine 8467 2 PCS 1,250.00 2,500.00 18 450.00 2,950.00',
+    '2 Taparia Screwdriver Set 8205 3 PCS 300.00 900.00 18 162.00 1,062.00',
+    'Total 4,012.00'
+  ].join(String.fromCharCode(10));
+  const p=parseBill(ocrFlattened);
+  assert.strictEqual(p.items.length,2);
+  assert.deepStrictEqual(p.items.map(x=>x.name),['Bosch Drill Machine','Taparia Screwdriver Set']);
+  assert.deepStrictEqual(p.items.map(x=>x.quantity),[2,3]);
+  assert.deepStrictEqual(p.items.map(x=>x.purchase_price),[1250,300]);
+}
+
 console.log('Purchase parser tests passed.');
