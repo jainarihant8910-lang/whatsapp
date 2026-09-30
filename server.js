@@ -297,6 +297,7 @@ app.get('/api/dashboard',async(r,s)=>s.json(await db.dashboard(r.businessId)));
 app.get('/api/items',async(r,s)=>s.json({items:await db.items(r.businessId)}));
 app.post('/api/items',async(r,s)=>{try{s.status(201).json({item:await db.addItem(r.businessId,r.body)})}catch(e){s.status(400).json({error:e.message})}});
 app.put('/api/items/:id',async(r,s)=>{try{s.json({item:await db.editItem(r.businessId,Number(r.params.id),r.body)})}catch(e){s.status(400).json({error:e.message})}});
+app.delete('/api/items/:id',async(r,s)=>{try{s.json(await db.deleteItem(r.businessId,Number(r.params.id)))}catch(e){s.status(400).json({error:e.message})}});
 app.post('/api/items/:id/stock',async(r,s)=>{try{s.json({item:await db.stockIn(r.businessId,Number(r.params.id),r.body.quantity,r.body.reason)})}catch(e){s.status(400).json({error:e.message})}});
 app.get('/api/transactions',async(r,s)=>s.json({transactions:await db.transactions(r.businessId)}));
 app.get('/api/senders',async(r,s)=>s.json({senders:await db.senders(r.businessId)}));
