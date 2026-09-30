@@ -18,7 +18,6 @@ const retailText=[
 
 {
   const p=parseBill(gstText);
-  console.log('DEBUG GST ITEMS',JSON.stringify(p.items));
   assert.strictEqual(p.items.length,2);
   assert.deepStrictEqual(p.items.map(x=>x.name),['Bosch All-in-One Metal Hand Tool Kit','Taparia Universal Tool Kit']);
   assert.deepStrictEqual(p.items.map(x=>x.quantity),[1,1]);
@@ -29,6 +28,7 @@ const retailText=[
 
 {
   const p=parseBill(retailText);
+  console.log('DEBUG RETAIL ITEMS',JSON.stringify(p.items));
   assert.strictEqual(p.items.length,2);
   assert.deepStrictEqual(p.items.map(x=>x.name),['Croissants','Sourdough Bread']);
   assert.deepStrictEqual(p.items.map(x=>x.quantity),[1,1]);
