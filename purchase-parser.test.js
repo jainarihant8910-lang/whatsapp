@@ -18,7 +18,7 @@ const retailText=[
 
 {
   const p=parseBill(gstText);
-  assert.strictEqual(p.items.length,2);
+  console.log('DEBUG GST ITEMS',JSON.stringify(p.items));\n  assert.strictEqual(p.items.length,2);
   assert.deepStrictEqual(p.items.map(x=>x.name),['Bosch All-in-One Metal Hand Tool Kit','Taparia Universal Tool Kit']);
   assert.deepStrictEqual(p.items.map(x=>x.quantity),[1,1]);
   assert.deepStrictEqual(p.items.map(x=>x.purchase_price),[2535,1270]);
