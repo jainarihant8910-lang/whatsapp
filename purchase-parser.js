@@ -160,6 +160,69 @@ function parseBill(text){
     }
   }
 
+  // Generic OCR row recovery. Camera OCR frequently collapses a table into
+  // one line while preserving the serial number, quantity/unit and numeric tail.
+  // Recover the row from those stable anchors instead of requiring one exact
+  // column layout.
+  const looseRowSeen=new Set();
+  const parseLooseSerialRow=(line)=>{
+    const m=String(line||'').trim().match(/^(\\d{1,3})[.)]?\\s+(.+)$/);
+    if(!m)return false;
+    const rest=m[2].replace(/\\s+/g,' ').trim();
+    if(/^(?:total|subtotal|grand total|taxable amount|total tax|invoice total|amount in words|terms|bank details|customer signature|authori[sz]ed signatory|page\\s+\\d+)/i.test(rest))return false;
+
+    // Locate the first quantity followed by a unit. This is more stable than
+    // guessing where the product name ends.
+    const qm=rest.match(/(?:^|\\s)(\\d+(?:\\.\\d+)?)\\s*([A-Za-z]{1,12})(?:\\s|$)/);
+    if(!qm)return false;
+    const q=num(qm[1]); if(!(q>0))return false;
+    const qPos=qm.index+(qm[0].indexOf(qm[1]));
+    let namePart=rest.slice(0,qPos).trim();
+    let tail=rest.slice(qPos+qm[1].length+qm[2].length).trim();
+    if(!namePart||!tail)return false;
+
+    // A numeric token immediately before the quantity is usually HSN/SAC.
+    let hsn='';
+    const hm=namePart.match(/(?:^|\\s)(\\d{4,8})$/);
+    if(hm){hsn=hm[1];namePart=namePart.slice(0,hm.index).trim();}
+    const name=clean(namePart).replace(/^[-:|]+|[-:|]+$/g,'').trim();
+    if(!name||name.length<2||/^(?:sr\\.?\\s*no|product|description|item|name)$/i.test(name))return false;
+
+    const nums=[];
+    const percentages=[];
+    const tokenRe=/(\\d[\\d,]*(?:\\.\\d+)?|\\d+(?:\\.\\d+)?\\s*%)/g;
+    let tm;
+    while((tm=tokenRe.exec(tail))){
+      const raw=tm[1].trim();
+      if(/%$/.test(raw)) percentages.push(num(raw.replace('%','')));
+      else nums.push(num(raw));
+    }
+    if(nums.length<2)return false;
+
+    // The final amount is normally the line total. If taxable value is present,
+    // derive unit purchase rate from it; this survives missing/garbled rate cells.
+    const total=nums[nums.length-1];
+    let taxable=0, rate=0, taxAmount=0;
+    if(nums.length>=3){
+      taxable=nums[nums.length-2];
+      if(taxable>total)taxable=0;
+    }
+    if(!(taxable>0)&&nums.length>=2)taxable=nums[nums.length-2];
+    if(taxable>0)rate=money(taxable/q);
+    if(!(rate>0)&&nums.length>=2)rate=nums[0];
+    if(!(rate>0))return false;
+    if(total>taxable)taxAmount=money(total-taxable);
+    let gstRate=percentages.length?percentages[percentages.length-1]:0;
+    if(!(gstRate>0)&&taxAmount>0&&taxable>0)gstRate=money(taxAmount/taxable*100);
+    const key=[name.toLowerCase(),q,rate,hsn].join('|');
+    if(looseRowSeen.has(key))return false;
+    looseRowSeen.add(key);
+    addItem(name,hsn,q,qm[2],rate,taxable||money(q*rate),gstRate,taxAmount,total);
+    return true;
+  };
+
+  for(const line of lines)parseLooseSerialRow(line);
+
   // Product extraction is intentionally based on the flattened table stream.
   // This handles both PDFs that keep rows on separate lines and PDFs that flatten
   // every cell into one line. Comma-formatted money such as 2,535.00 is supported.
