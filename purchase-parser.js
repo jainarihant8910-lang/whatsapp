@@ -47,8 +47,30 @@ function parseBill(text){
   const invoiceTotal=amountAfter(/(?:Total Amount After Tax|Total Amount)\b/i);
   const taxableTotal=amountAfter(/^Taxable Amount\b/i);
   const taxTotal=amountAfter(/^Total Tax\b/i);
-  const igst=amountAfter(/^Add\s*:\s*IGST\b/i);
-  const cgst=amountAfter(/^CGST\s/i), sgst=amountAfter(/^SGST\s/i);
+  // GST is often printed in the lower summary section as:
+  // CGST 9%  /  amount, SGST 9% / amount, or IGST 18% / amount.
+  // OCR may place the percentage and amount on separate lines, so inspect
+  // nearby lines instead of requiring the amount to be on the same line.
+  const gstSummary=(label)=>{
+    const re=new RegExp('\\\\b'+label+'\\\\b','i');
+    for(let i=0;i<lines.length;i++){
+      if(!re.test(lines[i]))continue;
+      const window=lines.slice(i,Math.min(lines.length,i+4)).join(' ');
+      const nums=[...window.matchAll(/(?:₹|Rs\\\\.?|INR)?\\\\s*(\\\\d[\\\\d,]*(?:\\\\.\\\\d+)?)/gi)].map(m=>num(m[1]));
+      const perc=[...window.matchAll(/(\\\\d+(?:\\\\.\\\\d+)?)\\\\s*%/g)].map(m=>num(m[1]));
+      const rate=perc.length?perc[0]:0;
+      const amount=nums.length?nums[nums.length-1]:0;
+      return {rate,amount};
+    }
+    return {rate:0,amount:0};
+  };
+  const ig=gstSummary('IGST');
+  const cg=gstSummary('CGST');
+  const sg=gstSummary('SGST');
+  const igst=ig.amount||amountAfter(/^Add\\s*:\\s*IGST\\b/i);
+  const cgst=cg.amount||amountAfter(/^CGST\\s/i);
+  const sgst=sg.amount||amountAfter(/^SGST\\s/i);
+  const summaryGstRate=ig.rate||((cg.rate||0)+(sg.rate||0));
 
   const customerIdx=lines.findIndex(l=>/Customer Detail/i.test(l));
   let buyerName=find(/^M\/S\.?\s+(.+)/i);
@@ -264,6 +286,11 @@ function parseBill(text){
   const finalTaxableTotal=taxableTotal||itemTaxableTotal;
   const finalTaxTotal=taxTotal||itemTaxTotal||((invoiceTotal||itemInvoiceTotal)>finalTaxableTotal?money((invoiceTotal||itemInvoiceTotal)-finalTaxableTotal):0);
   const finalInvoiceTotal=invoiceTotal||itemInvoiceTotal;
+  // If the bill gives GST only in the summary, carry that written GST rate
+  // onto items that do not already have a reliable line-level GST rate.
+  if(summaryGstRate>0){
+    for(const item of items)if(!(Number(item.gst_rate)>0))item.gst_rate=summaryGstRate;
+  }
   return {supplier_name:sellerName,supplier_gstin:sellerGstin,supplier_address:'',buyer_name:buyerName,buyer_gstin:buyerGstin,buyer_pan:buyerPan,seller_pan:sellerPan,seller_phone:'',seller_address:'',seller_state:'',seller_state_code:'',seller_id:sellerPan||sellerGstin||sellerName,buyer_id:buyerGstin||buyerPan||buyerName,invoice_number:invoiceNo,invoice_date:invoiceDate,place_of_supply:pos,challan_number:challanNumber,challan_date:challanDate,eway_bill_number:eway,transport,transport_id:transportId,taxable_total:finalTaxableTotal,tax_total:finalTaxTotal,cgst,sgst,igst,invoice_total:finalInvoiceTotal,items,raw_text:raw};
 }
 module.exports={parseBill};
