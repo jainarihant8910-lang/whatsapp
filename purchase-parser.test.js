@@ -72,4 +72,23 @@ const retailText=[
   assert.deepStrictEqual(p.items.map(x=>x.purchase_price),[1250,300]);
 }
 
+
+{
+  // OCR.space Engine 3 can emit a Markdown table without the separator row.
+  // Column order can also differ from the usual GST invoice layout.
+  const markdown=[
+    '| Sr No | Product Description | Qty | Unit | Taxable Value | GST % | Tax Amount | Total Amount |',
+    '| 1 | Bosch Drill Machine | 2 | PCS | 2500.00 | 18 | 450.00 | 2950.00 |',
+    '| 2 | Taparia Screwdriver Set | 3 | PCS | 900.00 | 18 | 162.00 | 1062.00 |',
+    '| Grand Total | | | | 3400.00 | | 612.00 | 4012.00 |'
+  ].join(String.fromCharCode(10));
+  const p=parseBill(markdown);
+  assert.strictEqual(p.items.length,2);
+  assert.deepStrictEqual(p.items.map(x=>x.name),['Bosch Drill Machine','Taparia Screwdriver Set']);
+  assert.deepStrictEqual(p.items.map(x=>x.quantity),[2,3]);
+  assert.deepStrictEqual(p.items.map(x=>x.purchase_price),[1250,300]);
+  assert.deepStrictEqual(p.items.map(x=>x.gst_rate),[18,18]);
+  assert.deepStrictEqual(p.items.map(x=>x.line_total),[2950,1062]);
+}
+
 console.log('Purchase parser tests passed.');
