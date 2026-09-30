@@ -358,7 +358,7 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
         // preserves invoice row order much better than first rendering a PDF
         // page into an image and then trying to reconstruct columns.
         console.log('Purchase OCR: sending original PDF to OCR.space Engine '+String(process.env.OCR_SPACE_ENGINE||'3'));
-        const ocrText=await ocrSpaceOcr(r.file.buffer,'application/pdf');
+        let ocrText=await ocrSpaceOcr(r.file.buffer,'application/pdf');
         let ocrParsed=parseBill(ocrText);
         // A PDF OCR response can be partial. When it recovers suspiciously few
         // rows, OCR each rendered page separately and keep the result with the
@@ -397,6 +397,7 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
           };
           text=parsed.raw_text;
         }
+        if(!ocrParsed.items.length){
           console.log('OCR.space returned text but no product rows parsed; trying local rendered-page fallback');
           const pdfScan=await pdfInfoAndScreenshots(r.file.buffer);
           const chunks=[];
