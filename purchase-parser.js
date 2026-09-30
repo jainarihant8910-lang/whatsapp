@@ -159,6 +159,38 @@ function parseBill(text){
     }
   }
 
+  // Last-resort OCR row parser. OCR can flatten or shift table columns, so use
+  // serial + quantity/unit + numeric-tail anchors instead of one exact layout.
+  for(const line of lines){
+    const head=line.match(/^(\\d{1,4})[.)]?\\s+(.+?)\\s+(?:(\\d{3,8})\\s+)?(\\d+(?:[.,]\\d+)?)\\s*([A-Za-z]{1,10})\\s+(.+)$/);
+    if(!head)continue;
+    const name=String(head[2]||'').trim();
+    if(!name||/^(?:total|subtotal|taxable amount|grand total|invoice|amount|sr|no|product|service)$/i.test(name))continue;
+    const hsn=(head[3]&&/^\\d+$/.test(head[3]))?head[3]:'';
+    const qty=num(head[4]), unit=String(head[5]||'PCS').toUpperCase();
+    const tail=String(head[6]||'');
+    const nums=[]; const reNum=/(?:₹|Rs\\.?|INR)?\\s*(\\d[\\d,]*(?:\\.\\d+)?)/gi;
+    let nm;
+    while((nm=reNum.exec(tail)))nums.push(num(nm[1]));
+    if(nums.length<3||!(qty>0))continue;
+
+    let rate=0,taxable=0,gstRate=0,taxAmount=0,total=0;
+    const paren=(tail.match(/\\(([0-9]+(?:\\.[0-9]+)?)\\)/)||[])[1];
+    if(nums.length>=5){
+      rate=nums[nums.length-5]; taxable=nums[nums.length-4];
+      gstRate=paren?num(paren):nums[nums.length-3];
+      taxAmount=nums[nums.length-2]; total=nums[nums.length-1];
+    }else if(nums.length===4){
+      rate=nums[0]; taxable=nums[1]; taxAmount=nums[2]; total=nums[3];
+      gstRate=paren?num(paren):((taxable>0&&taxAmount>0)?money(taxAmount/taxable*100):0);
+    }else{
+      rate=nums[0]; taxAmount=nums[nums.length-2]; total=nums[nums.length-1];
+      taxable=money(qty*rate);
+      gstRate=paren?num(paren):((taxable>0&&taxAmount>0)?money(taxAmount/taxable*100):0);
+    }
+    if(rate>0&&total>0)addItem(name,hsn,qty,unit,rate,taxable,gstRate,taxAmount,total);
+  }
+
   return {supplier_name:sellerName,supplier_gstin:sellerGstin,supplier_address:'',buyer_name:buyerName,buyer_gstin:buyerGstin,buyer_pan:buyerPan,seller_pan:sellerPan,seller_phone:'',seller_address:'',seller_state:'',seller_state_code:'',seller_id:sellerPan||sellerGstin||sellerName,buyer_id:buyerGstin||buyerPan||buyerName,invoice_number:invoiceNo,invoice_date:invoiceDate,place_of_supply:pos,challan_number:challanNumber,challan_date:challanDate,eway_bill_number:eway,transport,transport_id:transportId,taxable_total:taxableTotal,tax_total:taxTotal,cgst,sgst,igst,invoice_total:invoiceTotal,items,raw_text:raw};
 }
 module.exports={parseBill};
