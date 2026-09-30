@@ -737,6 +737,29 @@ async function claimConfirmation(orderId) {
     return result.changes === 1;
 }
 
+async function claimProcessedMessage(
+    messageId,
+    whatsappFrom = "",
+    senderPhone = "",
+    body = ""
+) {
+    const result = await run(
+        `
+        INSERT OR IGNORE INTO processed_messages
+        (
+            message_id,
+            whatsapp_from,
+            sender_phone,
+            body
+        )
+        VALUES (?, ?, ?, ?)
+        `,
+        [messageId, whatsappFrom, senderPhone, body]
+    );
+
+    return result.changes === 1;
+}
+
 async function isMessageProcessed(messageId) {
     const row = await get(
         `
@@ -1507,6 +1530,7 @@ module.exports = {
     deleteItem,
 
     isMessageProcessed,
+    claimProcessedMessage,
     saveProcessedMessage,
 
     createOrder,

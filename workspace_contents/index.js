@@ -652,47 +652,25 @@ async function handleStockCommand(
             return true;
         }
 
-        let reply =
-            "📦 *CURRENT STOCK*\n\n";
+        const { date, time } = getIndiaDateTime();
+        const formatItem = item => {
+            const quantity = Number(item.current_stock);
+            const quantityText = Number.isInteger(quantity) ? String(quantity) : quantity.toString();
+            return `• *${item.name}* — *${quantityText}${item.unit ? " " + item.unit : ""}*`;
+        };
 
-        if (
-            requestedItems.length === 0
-        ) {
-            for (
-                const item of items
-            ) {
-                reply +=
-                    `• *${item.name}*: ${item.current_stock} ${item.unit || ""}`.trimEnd() + "\n";
-            }
+        const replyLines = ["📦 *CURRENT STOCK*", `📅 ${date}  |  🕐 ${time}`, ""];
+
+        if (requestedItems.length === 0) {
+            replyLines.push(...items.map(formatItem));
         } else {
-            for (
-                const requestedName
-                    of requestedItems
-            ) {
-                const item =
-                    items.find(
-                        stockItem =>
-                            stockItem.name
-                                .trim()
-                                .toLowerCase() ===
-                            requestedName
-                                .trim()
-                                .toLowerCase()
-                    );
-
-                if (item) {
-                    reply +=
-                        `• ${item.name}: ${item.current_stock}\n`;
-                } else {
-                    reply +=
-                        `• ${requestedName}: ITEM NOT FOUND\n`;
-                }
+            for (const requestedName of requestedItems) {
+                const item = items.find(stockItem => stockItem.name.trim().toLowerCase() === requestedName.trim().toLowerCase());
+                replyLines.push(item ? formatItem(item) : `• *${requestedName}* — ❌ ITEM NOT FOUND`);
             }
         }
 
-        await message.reply(
-            reply.trim()
-        );
+        await message.reply(replyLines.join("\n"));
 
         return true;
 
@@ -1138,6 +1116,21 @@ function createWhatsAppClient() {
 
                 if (!sender) {
                     console.log("UNAUTHORIZED SENDER:", senderPhone);
+                    return;
+                }
+
+                // Atomically claim the incoming message before any business
+                // logic. This prevents a repeated WhatsApp event from being
+                // processed again after the first handler has finished.
+                const messageClaimed = await db.claimProcessedMessage(
+                    messageId,
+                    message.from,
+                    senderPhone,
+                    body
+                );
+
+                if (!messageClaimed) {
+                    console.log("Duplicate message ignored after persistent claim:", messageId);
                     return;
                 }
 

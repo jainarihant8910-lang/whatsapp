@@ -9,9 +9,12 @@ const app = read('public/app.js');
 function must(text, pattern, message) { if (!pattern.test(text)) throw new Error(message); }
 must(index, /inFlightMessageIds/, 'Missing in-flight WhatsApp duplicate guard.');
 if (!index.includes('db.claimConfirmation(order.id)')) throw new Error('Missing atomic confirmation claim.');
+if (!index.includes('db.claimProcessedMessage(')) throw new Error('Missing persistent incoming-message claim.');
 if (!index.includes('handleStockCommand(\n                        message,\n                        WHATSAPP_BUSINESS_ID')) throw new Error('Stock command is not business-scoped.');
 if (!index.includes('📦 *CURRENT STOCK*')) throw new Error('Stock reply heading was not normalized.');
+if (!index.includes('requestedItems.length === 0')) throw new Error('Stock-without-product must return all products.');
 if (!database.includes('async function claimConfirmation(orderId)')) throw new Error('Missing database confirmation claim.');
+if (!database.includes('async function claimProcessedMessage(')) throw new Error('Missing database incoming-message claim.');
 must(database, /confirmation_sent = 2/, 'Missing confirmation sending state.');
 if (!database.includes('Number(item.current_stock) !== 0')) throw new Error('Delete guard must require zero stock.');
 if (!server.includes('db.deleteItem(num(req.params.id), req.auth.businessId)')) throw new Error('Delete API is not using the guarded database method.');
