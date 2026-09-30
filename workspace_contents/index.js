@@ -113,6 +113,9 @@ let shuttingDown = false;
 
 let clientGeneration = 0;
 
+const inFlightMessageIds = new Set();
+const WHATSAPP_BUSINESS_ID = Number(process.env.WHATSAPP_BUSINESS_ID || 1);
+
 // ============================================================
 // HELPERS
 // ============================================================
@@ -615,7 +618,8 @@ async function sendConfirmationReply(
 // ============================================================
 
 async function handleStockCommand(
-    message
+    message,
+    businessId = WHATSAPP_BUSINESS_ID
 ) {
     const lines =
         String(message.body || "")
@@ -635,7 +639,7 @@ async function handleStockCommand(
 
     try {
         const items =
-            await db.getItems();
+            await db.getItems(businessId);
 
         if (
             !items ||
@@ -649,7 +653,7 @@ async function handleStockCommand(
         }
 
         let reply =
-            "📦 CURRENT STOCK\n\n";
+            "📦 *CURRENT STOCK*\n\n";
 
         if (
             requestedItems.length === 0
@@ -658,7 +662,7 @@ async function handleStockCommand(
                 const item of items
             ) {
                 reply +=
-                    `• ${item.name}: ${item.current_stock}\n`;
+                    `• *${item.name}*: ${item.current_stock} ${item.unit || ""}`.trimEnd() + "\n";
             }
         } else {
             for (
@@ -1087,6 +1091,13 @@ function createWhatsAppClient() {
                     return;
                 }
 
+                if (inFlightMessageIds.has(messageId)) {
+                    console.log("Concurrent duplicate event ignored:", messageId);
+                    return;
+                }
+
+                inFlightMessageIds.add(messageId);
+
                 // ------------------------------------------------
                 // DUPLICATE PROTECTION
                 // ------------------------------------------------
@@ -1105,14 +1116,38 @@ function createWhatsAppClient() {
                 }
 
                 // ------------------------------------------------
+                // RESOLVE + AUTHORIZE SENDER
+                // ------------------------------------------------
+
+                const senderPhone =
+                    await resolveRealPhoneNumber(
+                        message,
+                        waClient
+                    );
+
+                if (!senderPhone) {
+                    console.log("Could not resolve real sender phone. Ignoring.");
+                    return;
+                }
+
+                const sender =
+                    await db.findSenderByPhone(
+                        senderPhone
+                    );
+
+                if (!sender) {
+                    console.log("UNAUTHORIZED SENDER:", senderPhone);
+                    return;
+                }
+
+                // ------------------------------------------------
                 // STOCK COMMAND
-                //
-                // Must happen AFTER duplicate check.
                 // ------------------------------------------------
 
                 if (
                     await handleStockCommand(
-                        message
+                        message,
+                        WHATSAPP_BUSINESS_ID
                     )
                 ) {
                     return;
@@ -1137,52 +1172,8 @@ function createWhatsAppClient() {
                     return;
                 }
 
-                // ------------------------------------------------
-                // RESOLVE REAL PHONE
-                // ------------------------------------------------
-
-                const senderPhone =
-                    await resolveRealPhoneNumber(
-                        message,
-                        waClient
-                    );
-
-                if (!senderPhone) {
-                    console.log(
-                        "Could not resolve real sender phone. Ignoring."
-                    );
-
-                    return;
-                }
-
-                console.log(
-                    "Resolved sender:",
-                    senderPhone
-                );
-
-                // ------------------------------------------------
-                // AUTHORIZED SENDER
-                // ------------------------------------------------
-
-                const sender =
-                    await db.findSenderByPhone(
-                        senderPhone
-                    );
-
-                if (!sender) {
-                    console.log(
-                        "UNAUTHORIZED SENDER:",
-                        senderPhone
-                    );
-
-                    return;
-                }
-
-                console.log(
-                    "Authorized sender:",
-                    sender.name ||
-                        sender.whatsapp_id
-                );
+                console.log("Resolved sender:", senderPhone);
+                console.log("Authorized sender:", sender.name || sender.whatsapp_id);
 
                 // ------------------------------------------------
                 // DELIVERED TO
@@ -1263,6 +1254,17 @@ function createWhatsAppClient() {
                 );
 
                 // ------------------------------------------------
+                // CLAIM QUOTED REPLY
+                // ------------------------------------------------
+
+                const claimed = await db.claimConfirmation(order.id);
+
+                if (!claimed) {
+                    console.log("Confirmation already sent or being sent for Order #", order.id);
+                    return;
+                }
+
+                // ------------------------------------------------
                 // SEND QUOTED REPLY
                 // ------------------------------------------------
 
@@ -1332,6 +1334,11 @@ function createWhatsAppClient() {
                     error?.message ||
                     error
                 );
+            } finally {
+                const currentMessageId = getMessageId(message);
+                if (currentMessageId) {
+                    inFlightMessageIds.delete(currentMessageId);
+                }
             }
         }
     );
