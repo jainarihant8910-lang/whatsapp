@@ -8,7 +8,7 @@ const server = read('server.js');
 const app = read('public/app.js');
 function must(text, pattern, message) { if (!pattern.test(text)) throw new Error(message); }
 must(index, /inFlightMessageIds/, 'Missing in-flight WhatsApp duplicate guard.');
-must(index, /claimConfirmation\\(order\\.id\\)/, 'Missing atomic confirmation claim.');
+if (!index.includes('db.claimConfirmation(order.id)')) throw new Error('Missing atomic confirmation claim.');
 if (!index.includes('handleStockCommand(\n                        message,\n                        WHATSAPP_BUSINESS_ID')) throw new Error('Stock command is not business-scoped.');
 must(index, /📦 \\*CURRENT STOCK\\*/, 'Stock reply heading was not normalized.');
 must(database, /async function claimConfirmation\\(orderId\\)/, 'Missing database confirmation claim.');
