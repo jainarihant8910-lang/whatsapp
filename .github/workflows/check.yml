@@ -16,6 +16,6 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - run: npm install
-        working-directory: workspace_contents
+        working-directory: .
       - run: npm run test:all
-        working-directory: workspace_contents
+        working-directory: .
