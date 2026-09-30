@@ -14,7 +14,7 @@ if (!index.includes('📦 *CURRENT STOCK*')) throw new Error('Stock reply headin
 if (!database.includes('async function claimConfirmation(orderId)')) throw new Error('Missing database confirmation claim.');
 must(database, /confirmation_sent = 2/, 'Missing confirmation sending state.');
 if (!database.includes('Number(item.current_stock) !== 0')) throw new Error('Delete guard must require zero stock.');
-must(server, /db\\.deleteItem\\(num\\(req\\.params\\.id\\), req\\.auth\\.businessId\\)/, 'Delete API is not using the guarded database method.');
+if (!server.includes('db.deleteItem(num(req.params.id), req.auth.businessId)')) throw new Error('Delete API is not using the guarded database method.');
 if (!server.includes("COALESCE(i.name,'Deleted product #'")) throw new Error('Transaction history does not handle deleted products.');
 must(app, /deleteProduct\\(x\\.id\\)/, 'Zero-stock delete button is missing.');
 must(app, /Number\\(x\\.current_stock\\)===0/, 'Delete button is not restricted to zero stock.');
