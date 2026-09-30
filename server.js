@@ -459,9 +459,12 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
     if(r.file.mimetype!=='application/pdf' && parsed.items.length<10){
       try{
         const passes=[];
-        for(const psm of ['6','11']){
+        let imageScanBuffer=r.file.buffer;
+        try{ imageScanBuffer=await normalizeImageForOcr(r.file.buffer); }
+        catch(e){ console.log('Image normalization unavailable; using original:',e.message); }
+        for(const psm of ['6','11','12']){
           try{
-            const tr=await Tesseract.recognize(r.file.buffer,'eng',{tessedit_pageseg_mode:psm});
+            const tr=await Tesseract.recognize(imageScanBuffer,'eng',{tessedit_pageseg_mode:psm,preserve_interword_spaces:'1'});
             if(tr.data.text&&tr.data.text.trim())passes.push('[TESSERACT PSM '+psm+']\\n'+tr.data.text);
           }catch(e){console.error('Image Tesseract PSM '+psm+' failed:',e.message)}
         }
