@@ -223,35 +223,13 @@ async function initializeDatabase() {
         )
     `);
 
-    async function addColumnIfMissing(tableName, columnName, definition) {
-        const columns = await all(`PRAGMA table_info(${tableName})`);
-        if (!columns.some(c => c.name === columnName)) {
-            await run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
-        }
-    }
     let business = await get(`SELECT id FROM businesses ORDER BY id LIMIT 1`);
     if (!business) {
         await run(`INSERT INTO businesses (business_id,firm_name,invoice_prefix) VALUES ('DEFAULT','My Business','INV')`);
         business = await get(`SELECT id FROM businesses ORDER BY id LIMIT 1`);
     }
-    for (const table of ['senders','items','orders','order_items','stock_transactions','processed_messages','whatsapp_lid_map']) {
-        await addColumnIfMissing(table,'business_id','INTEGER NOT NULL DEFAULT 1');
-    }
-    await addColumnIfMissing('items','sku',"TEXT DEFAULT ''");
-    await addColumnIfMissing('items','hsn_code',"TEXT DEFAULT ''");
-    await addColumnIfMissing('items','unit',"TEXT DEFAULT 'PCS'");
-    await addColumnIfMissing('items','purchase_price','REAL NOT NULL DEFAULT 0');
-    await addColumnIfMissing('items','selling_price','REAL NOT NULL DEFAULT 0');
-    await addColumnIfMissing('items','gst_rate','REAL NOT NULL DEFAULT 0');
-    for (const table of ['senders','items','orders','order_items','stock_transactions','processed_messages','whatsapp_lid_map']) {
-        await run(`UPDATE ${table} SET business_id=? WHERE business_id IS NULL OR business_id=0`,[business.id]);
-    }
-    await run(`CREATE INDEX IF NOT EXISTS idx_orders_business ON orders(business_id,id DESC)`);
-    await run(`CREATE INDEX IF NOT EXISTS idx_items_business ON items(business_id,name)`);
-    await run(`CREATE INDEX IF NOT EXISTS idx_customers_business ON customers(business_id,id DESC)`);
-    await run(`CREATE INDEX IF NOT EXISTS idx_invoices_business ON invoices(business_id,id DESC)`);
 
-    // Existing legacy tables follow.
+    // Legacy tables are created below before their compatibility migrations run.
 
     await run(`
         CREATE TABLE IF NOT EXISTS senders (
@@ -388,6 +366,32 @@ async function initializeDatabase() {
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     `);
+
+    async function addColumnIfMissing(tableName, columnName, definition) {
+        const columns = await all(`PRAGMA table_info(${tableName})`);
+        if (!columns.some(c => c.name === columnName)) {
+            await run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+        }
+    }
+
+    for (const table of ['senders','items','orders','order_items','stock_transactions','processed_messages','whatsapp_lid_map']) {
+        await addColumnIfMissing(table, 'business_id', 'INTEGER NOT NULL DEFAULT 1');
+    }
+    await addColumnIfMissing('items', 'sku', "TEXT DEFAULT ''");
+    await addColumnIfMissing('items', 'hsn_code', "TEXT DEFAULT ''");
+    await addColumnIfMissing('items', 'unit', "TEXT DEFAULT 'PCS'");
+    await addColumnIfMissing('items', 'purchase_price', 'REAL NOT NULL DEFAULT 0');
+    await addColumnIfMissing('items', 'selling_price', 'REAL NOT NULL DEFAULT 0');
+    await addColumnIfMissing('items', 'gst_rate', 'REAL NOT NULL DEFAULT 0');
+
+    for (const table of ['senders','items','orders','order_items','stock_transactions','processed_messages','whatsapp_lid_map']) {
+        await run(`UPDATE ${table} SET business_id=? WHERE business_id IS NULL OR business_id=0`, [business.id]);
+    }
+
+    await run(`CREATE INDEX IF NOT EXISTS idx_orders_business ON orders(business_id,id DESC)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_items_business ON items(business_id,name)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_customers_business ON customers(business_id,id DESC)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_invoices_business ON invoices(business_id,id DESC)`);
 }
 
 initializeDatabase()
