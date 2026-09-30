@@ -363,7 +363,7 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
         // A PDF OCR response can be partial. When it recovers suspiciously few
         // rows, OCR each rendered page separately and keep the result with the
         // most product rows.
-        if(ocrParsed.items.length < Math.max(3, parsed.items.length)){
+        if(ocrParsed.items.length < 10){
           try{
             const pdfScan=await pdfInfoAndScreenshots(r.file.buffer);
             const pageTexts=[];
