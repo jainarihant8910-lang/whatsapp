@@ -1,5 +1,5 @@
 require('dotenv').config();
-const express=require('express'); const path=require('path'); const crypto=require('crypto'); const fs=require('fs'); const os=require('os'); const {spawn}=require('child_process'); const sharp=require('sharp'); const multer=require('multer'); const pdfParse=require('pdf-parse'); const Tesseract=require('tesseract.js'); const PDFDocument=require('pdfkit'); const db=require('./platform-db');
+const express=require('express'); const path=require('path'); const crypto=require('crypto'); const fs=require('fs'); const os=require('os'); const {spawn}=require('child_process'); const multer=require('multer'); const pdfParse=require('pdf-parse'); const Tesseract=require('tesseract.js'); const PDFDocument=require('pdfkit'); const db=require('./platform-db');
 const app=express(); const PORT=Number(process.env.PORT)||3000; const PUBLIC=path.join(__dirname,'public');
 app.use(express.json({limit:'3mb'})); app.use(express.urlencoded({extended:true})); app.use(express.static(PUBLIC));
 function cookieToken(req){const m=String(req.headers.cookie||'').match(/(?:^|;)\s*dm_token=([^;]+)/);return m?decodeURIComponent(m[1]):''}
@@ -7,16 +7,6 @@ async function auth(req,res,next){try{const s=await db.session(cookieToken(req))
 function csrf(req,res,next){if(['GET','HEAD','OPTIONS'].includes(req.method))return next();const c=String(req.headers['x-csrf-token']||'');if(!c)return res.status(403).json({error:'CSRF token missing'});db.get('SELECT csrf_hash FROM sessions WHERE token_hash=?',[crypto.createHash('sha256').update(cookieToken(req)).digest('hex')]).then(s=>{if(!s||s.csrf_hash!==crypto.createHash('sha256').update(c).digest('hex'))return res.status(403).json({error:'Invalid CSRF token'});next()}).catch(e=>res.status(500).json({error:e.message}))}
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:25*1024*1024},fileFilter:(r,f,cb)=>cb(null,['application/pdf','image/jpeg','image/png','image/webp'].includes(f.mimetype))});
 function hash(buf){return crypto.createHash('sha256').update(buf).digest('hex')}
-async function normalizeImageForOcr(buf){
-  return sharp(buf)
-    .rotate()
-    .resize({width:2200,height:2200,fit:'inside',withoutEnlargement:true})
-    .grayscale()
-    .normalize()
-    .sharpen()
-    .jpeg({quality:82,mozjpeg:true})
-    .toBuffer();
-}
 let paddleWorker=null;
 let paddleWorkerBuffer='';
 let paddleRequestId=0;
@@ -98,6 +88,8 @@ async function ocrSpaceOcr(buf,mimeType='image/png'){
   form.append('isTable',String(process.env.OCR_SPACE_TABLE||'true'));
   form.append('OCREngine',String(process.env.OCR_SPACE_ENGINE||'3'));
   form.append('isOverlayRequired','false');
+  form.append('scale','true');
+  form.append('detectOrientation','true');
 
   const response=await fetch('https://api.ocr.space/parse/image',{
     method:'POST',
@@ -119,27 +111,16 @@ async function ocrSpaceOcr(buf,mimeType='image/png'){
 
 async function ocrImage(buf,mimeType='image/png'){
   const opts={logger:x=>{if(x.status==='recognizing text'&&Math.round((x.progress||0)*100)%20===0)console.log('Tesseract OCR',Math.round((x.progress||0)*100)+'%')}};
-  let normalized=null;
-
-  // First try the original image so high-resolution bills retain maximum detail.
+  // OCR.space handles orientation/scaling server-side. Keep the original
+  // image here so the application has no ImageMagick/native image dependency.
   try{
     const apiText=await ocrSpaceOcr(buf,mimeType);
     if(apiText&&apiText.trim().length>=8)return apiText;
   }catch(e){
-    console.log('OCR.space original image failed:',e.message);
+    console.log('OCR.space image failed:',e.message);
   }
 
-  // Phone-camera images are often too large for OCR.space. Normalize them to
-  // an auto-oriented, high-contrast JPEG and retry automatically.
-  try{
-    normalized=await normalizeImageForOcr(buf);
-    const apiText=await ocrSpaceOcr(normalized,'image/jpeg');
-    if(apiText&&apiText.trim().length>=8)return apiText;
-  }catch(e){
-    console.log('OCR.space normalized image failed:',e.message);
-  }
-
-  const source=normalized||buf;
+  const source=buf;
   try{
     const r=await Tesseract.recognize(source,'eng',{...opts,tessedit_pageseg_mode:'4',preserve_interword_spaces:'1'});
     return r.data.text||'';
@@ -455,9 +436,7 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
     if(r.file.mimetype!=='application/pdf' && parsed.items.length<10){
       try{
         const passes=[];
-        let imageScanBuffer=r.file.buffer;
-        try{ imageScanBuffer=await normalizeImageForOcr(r.file.buffer); }
-        catch(e){ console.log('Image normalization unavailable; using original:',e.message); }
+        const imageScanBuffer=r.file.buffer;
         for(const psm of ['6','11','12']){
           try{
             const tr=await Tesseract.recognize(imageScanBuffer,'eng',{tessedit_pageseg_mode:psm,preserve_interword_spaces:'1'});
