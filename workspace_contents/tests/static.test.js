@@ -13,7 +13,7 @@ if (!index.includes('handleStockCommand(\n                        message,\n    
 must(index, /📦 \\*CURRENT STOCK\\*/, 'Stock reply heading was not normalized.');
 must(database, /async function claimConfirmation\\(orderId\\)/, 'Missing database confirmation claim.');
 must(database, /confirmation_sent = 2/, 'Missing confirmation sending state.');
-must(database, /current_stock\\) !== 0/, 'Delete guard must require zero stock.');
+if (!database.includes('Number(item.current_stock) !== 0')) throw new Error('Delete guard must require zero stock.');
 must(server, /db\\.deleteItem\\(num\\(req\\.params\\.id\\), req\\.auth\\.businessId\\)/, 'Delete API is not using the guarded database method.');
 must(server, /COALESCE\\(i\\.name,'Deleted product #'/, 'Transaction history does not handle deleted products.');
 must(app, /deleteProduct\\(x\\.id\\)/, 'Zero-stock delete button is missing.');
