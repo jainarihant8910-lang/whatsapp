@@ -122,9 +122,21 @@ function parseBill(text){
         duplicate.sku=makeSku(name,hsn||duplicate.hsn_code);
       }
       if(!duplicate.hsn_code && hsn)duplicate.hsn_code=hsn;
-      if(!(Number(duplicate.gst_rate)>0) && Number(gstRate)>0)duplicate.gst_rate=Number(gstRate);
-      if(!(Number(duplicate.tax_amount)>0) && Number(taxAmount)>0)duplicate.tax_amount=taxAmount;
-      if(!(Number(duplicate.line_total)>0) && Number(lineTotal)>0)duplicate.line_total=lineTotal;
+      const newGst=Number(gstRate)||0;
+      const oldGst=Number(duplicate.gst_rate)||0;
+      if((oldGst>100&&newGst>0&&newGst<=100) || (!(Number(duplicate.purchase_price)>0)&&Number(rate)>0)){
+        duplicate.quantity=q;
+        duplicate.unit=String(unit||duplicate.unit||'PCS').toUpperCase();
+        duplicate.purchase_price=Number(rate);
+        duplicate.taxable_value=Number(taxable)||money(q*rate);
+        duplicate.gst_rate=newGst||oldGst;
+        duplicate.tax_amount=Number(taxAmount)||0;
+        duplicate.line_total=Number(lineTotal)||money((duplicate.taxable_value||0)+(duplicate.tax_amount||0));
+      }else{
+        if(!(Number(duplicate.gst_rate)>0) && newGst>0)duplicate.gst_rate=newGst;
+        if(!(Number(duplicate.tax_amount)>0) && Number(taxAmount)>0)duplicate.tax_amount=taxAmount;
+        if(!(Number(duplicate.line_total)>0) && Number(lineTotal)>0)duplicate.line_total=lineTotal;
+      }
       return;
     }
     const key=[normalizedName,q,rate].join('|'); if(seen.has(key))return; seen.add(key);
