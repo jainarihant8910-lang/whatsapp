@@ -421,22 +421,28 @@ function normalizePhone(phone) {
 // SENDERS
 // ============================================================
 
-async function findSenderByPhone(phone) {
+async function findSenderByPhone(phone, businessId = null) {
     const normalized = normalizePhone(phone);
 
+    if (businessId !== null && businessId !== undefined) {
+        return get(
+            `SELECT * FROM senders
+             WHERE whatsapp_id = ? AND business_id = ?
+             LIMIT 1`,
+            [normalized, businessId]
+        );
+    }
+
     return get(
-        `
-        SELECT *
-        FROM senders
-        WHERE whatsapp_id = ?
-        LIMIT 1
-        `,
+        `SELECT * FROM senders
+         WHERE whatsapp_id = ?
+         LIMIT 1`,
         [normalized]
     );
 }
 
-async function isSenderAllowed(phone) {
-    const sender = await findSenderByPhone(phone);
+async function isSenderAllowed(phone, businessId = null) {
+    const sender = await findSenderByPhone(phone, businessId);
 
     return !!sender;
 }
@@ -819,6 +825,7 @@ async function createOrder({
     whatsappFrom,
     body = "",
     senderPhone = "",
+    businessId = 1,
     items
 }) {
     if (!whatsappMessageId) {
@@ -890,6 +897,7 @@ async function createOrder({
             `
             INSERT INTO orders
             (
+                business_id,
                 date,
                 time,
                 delivered_to,
@@ -902,9 +910,10 @@ async function createOrder({
                 status,
                 confirmation_sent
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'PENDING', 0)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'PENDING', 0)
             `,
             [
+                businessId,
                 date || "",
                 time || "",
                 deliveredTo || "Unknown",
@@ -996,11 +1005,12 @@ async function createOrder({
                     `
                     SELECT *
                     FROM items
-                    WHERE name = ?
+                    WHERE business_id = ?
+                      AND name = ?
                     COLLATE NOCASE
                     LIMIT 1
                     `,
-                    [itemName]
+                    [businessId, itemName]
                 );
 
             // ----------------------------------------------
@@ -1161,6 +1171,7 @@ async function createOrder({
                 `
                 INSERT INTO stock_transactions
                 (
+                    business_id,
                     item_id,
                     type,
                     quantity,
@@ -1168,9 +1179,10 @@ async function createOrder({
                     order_id,
                     order_item_id
                 )
-                VALUES (?, 'OUT', ?, ?, ?, ?)
+                VALUES (?, ?, 'OUT', ?, ?, ?, ?)
                 `,
                 [
+                    businessId,
                     stockItem.id,
                     requestedQuantity,
                     `WhatsApp Order #${orderId}`,
