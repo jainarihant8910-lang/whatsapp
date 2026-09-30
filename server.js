@@ -109,25 +109,54 @@ async function ocrSpaceOcr(buf,mimeType='image/png'){
   return text;
 }
 
+async function ocrSpaceOcrWithTableMode(buf,mimeType='image/png',tableMode='true'){
+  const apiKey=String(process.env.OCR_SPACE_API_KEY||'').trim();
+  if(!apiKey)throw new Error('OCR_SPACE_API_KEY is not configured');
+  const form=new FormData();
+  form.append('file',new Blob([buf],{type:mimeType}),mimeType==='application/pdf'?'bill.pdf':'bill.'+(mimeType.split('/')[1]||'bin'));
+  form.append('language',process.env.OCR_SPACE_LANGUAGE||'auto');
+  form.append('isTable',String(tableMode));
+  form.append('OCREngine',String(process.env.OCR_SPACE_ENGINE||'3'));
+  form.append('isOverlayRequired','false');
+  form.append('scale','true');
+  form.append('detectOrientation','true');
+  const response=await fetch('https://api.ocr.space/parse/image',{method:'POST',headers:{apikey:apiKey},body:form});
+  if(!response.ok)throw new Error('OCR.space HTTP '+response.status);
+  const data=await response.json();
+  if(data.IsErroredOnProcessing){
+    const message=Array.isArray(data.ErrorMessage)?data.ErrorMessage.join('; '):String(data.ErrorMessage||'OCR.space processing failed');
+    throw new Error(message);
+  }
+  const text=Array.isArray(data.ParsedResults)?data.ParsedResults.map(x=>String(x?.ParsedText||'')).filter(Boolean).join('\n'):'';
+  if(!text.trim())throw new Error('OCR.space returned no text');
+  return text;
+}
+
 async function ocrImage(buf,mimeType='image/png'){
   const opts={logger:x=>{if(x.status==='recognizing text'&&Math.round((x.progress||0)*100)%20===0)console.log('Tesseract OCR',Math.round((x.progress||0)*100)+'%')}};
-  // OCR.space handles orientation/scaling server-side. Keep the original
-  // image here so the application has no ImageMagick/native image dependency.
-  try{
-    const apiText=await ocrSpaceOcr(buf,mimeType);
-    if(apiText&&apiText.trim().length>=8)return apiText;
-  }catch(e){
-    console.log('OCR.space image failed:',e.message);
+  const results=[];
+  // Run OCR.space in both normal and table modes. Table mode is useful for
+  // invoices, but it can be worse on ordinary camera photos, so never accept
+  // it as the only OCR result.
+  for(const tableMode of ['true','false']){
+    try{
+      const apiText=await ocrSpaceOcrWithTableMode(buf,mimeType,tableMode);
+      if(apiText&&apiText.trim().length>=8)results.push(apiText);
+    }catch(e){
+      console.log('OCR.space image '+(tableMode==='true'?'table':'plain')+' failed:',e.message);
+    }
   }
-
+  // Local OCR is always run as a fallback/second opinion for images. This is
+  // deliberately independent of the API result so a readable API header cannot
+  // hide better product rows found by Tesseract.
   const source=buf;
-  try{
-    const r=await Tesseract.recognize(source,'eng',{...opts,tessedit_pageseg_mode:'4',preserve_interword_spaces:'1'});
-    return r.data.text||'';
-  }catch(e){
-    const r=await Tesseract.recognize(source,'eng',opts);
-    return r.data.text||'';
+  for(const psm of ['6','11']){
+    try{
+      const r=await Tesseract.recognize(source,'eng',{...opts,tessedit_pageseg_mode:psm,preserve_interword_spaces:'1'});
+      if(r.data.text&&r.data.text.trim())results.push(r.data.text);
+    }catch(e){console.log('Tesseract PSM '+psm+' failed:',e.message)}
   }
+  return results.join('\n\n');
 }
 async function pdfInfoAndScreenshots(buf){
   const parser=new pdfParse.PDFParse({data:buf});
