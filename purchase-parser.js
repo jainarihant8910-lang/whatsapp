@@ -84,49 +84,56 @@ function parseBill(text){
     items.push({name,supplier_sku:'',sku:makeSku(name,hsn),hsn_code:hsn,quantity:q,unit:String(unit||'PCS').toUpperCase(),purchase_price:rate,gst_rate:Number(gstRate||0),taxable_value:taxable||money(q*rate),tax_amount:taxAmount||0,line_total:lineTotal||money((taxable||money(q*rate))+(taxAmount||0))});
   };
 
-  // OCR.space Engine 3 with table mode can return invoice rows as Markdown.
-  // Parse those rows before the flattened-text heuristics so the table structure
-  // is preserved instead of being lost when columns are joined together.
+  // OCR.space Engine 3 with table mode can return Markdown-style rows.
+  // Accept tables with or without the Markdown separator row and tolerate
+  // common invoice column names/orderings. OCR is allowed to omit a rate
+  // column; when taxable/amount is present we can recover a unit rate safely.
   const markdownLines=lines.filter(l=>l.includes('|'));
   if(markdownLines.length>=2){
-    const headerIndex=markdownLines.findIndex(l=>/product|item|description|particular|name/i.test(l) && /qty|quantity|rate|amount|price/i.test(l));
+    const splitCells=line=>String(line||'').split('|').map(x=>x.trim()).filter((x,i,a)=>!(i===0&&x==='')&&!(i===a.length-1&&x===''));
+    const isSeparator=line=>splitCells(line).length>=2&&splitCells(line).every(x=>/^:?-{2,}:?$/.test(x));
+    const headerIndex=markdownLines.findIndex(l=>{
+      const h=splitCells(l).join(' ').toLowerCase();
+      return /product|item|description|particular|goods|service|name/.test(h) && /qty|quantity|units|rate|amount|price|taxable/.test(h);
+    });
     if(headerIndex>=0){
-      const header=markdownLines[headerIndex].split('|').map(x=>x.trim().toLowerCase()).filter(Boolean);
-      const separator=/^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(markdownLines[headerIndex+1]||'');
-      if(separator){
-        const col=(patterns)=>{
-          for(const p of patterns){const i=header.findIndex(h=>p.test(h));if(i>=0)return i}
-          return -1;
-        };
-        const nameCol=col([/product|item|description|particular|name/]);
-        const qtyCol=col([/^qty$|quantity/]);
-        const unitCol=col([/^unit$|uom/]);
-        const hsnCol=col([/hsn|sac/]);
-        const rateCol=col([/^rate$|price|unit price/]);
-        const taxableCol=col([/taxable/]);
-        const gstCol=col([/gst|tax %|tax rate/]);
-        const taxCol=col([/^tax$|tax amount/]);
-        const totalCol=col([/^amount$|total|net amount|line total/]);
-        for(let i=headerIndex+2;i<markdownLines.length;i++){
-          const cells=markdownLines[i].split('|').map(x=>x.trim());
-          if(cells.length<Math.max(header.length,3)||/^[-:|\s]+$/.test(markdownLines[i]))continue;
-          const get=j=>j>=0&&j<cells.length?cells[j]:'';
-          const name=clean(get(nameCol));
-          if(!name||/^(total|subtotal|grand total|tax|invoice|amount)$/i.test(name))continue;
-          const qty=num(get(qtyCol));
-          if(!(qty>0))continue;
-          const unit=get(unitCol)||'PCS';
-          const hsn=clean(get(hsnCol));
-          const rate=money(get(rateCol));
-          if(!(rate>0))continue;
-          const taxable=money(get(taxableCol))||money(qty*rate);
-          const taxAmount=money(get(taxCol));
-          let gstRate=money(get(gstCol));
-          if(gstRate>100&&taxAmount<=100)gstRate=0;
-          if(!gstRate&&taxAmount>0&&taxable>0)gstRate=money(taxAmount/taxable*100);
-          const total=money(get(totalCol))||money(taxable+taxAmount);
-          addItem(name,hsn,qty,unit,rate,taxable,gstRate,taxAmount,total);
-        }
+      const header=splitCells(markdownLines[headerIndex]).map(x=>x.toLowerCase());
+      const dataStart=isSeparator(markdownLines[headerIndex+1])?headerIndex+2:headerIndex+1;
+      const col=(patterns)=>{
+        for(const p of patterns){const i=header.findIndex(h=>p.test(h));if(i>=0)return i}
+        return -1;
+      };
+      const nameCol=col([/name.*(?:product|item)|product|item|description|particular|goods|service|^name$/]);
+      const qtyCol=col([/^qty\.?$|quantity|units?/]);
+      const unitCol=col([/^unit$|uom|measure/]);
+      const hsnCol=col([/hsn|sac/]);
+      const rateCol=col([/^rate$|rate per unit|unit price|price|selling price/]);
+      const taxableCol=col([/taxable|base value|net value/]);
+      const gstCol=col([/gst|tax %|tax rate|gst %/]);
+      const taxCol=col([/^tax$|tax amount|gst amount|igst|cgst|sgst/]);
+      const totalCol=col([/^amount$|total|net amount|line total|value/]);
+      for(let i=dataStart;i<markdownLines.length;i++){
+        if(isSeparator(markdownLines[i]))continue;
+        const cells=splitCells(markdownLines[i]);
+        if(cells.length<3)continue;
+        const get=j=>j>=0&&j<cells.length?cells[j]:'';
+        const name=clean(get(nameCol));
+        if(!name||/^(?:sr\.?\s*no|total|subtotal|grand total|tax|invoice|amount|description)$/i.test(name))continue;
+        const qty=num(get(qtyCol));
+        if(!(qty>0))continue;
+        const unit=get(unitCol)||'PCS';
+        const hsn=clean(get(hsnCol)).replace(/[^0-9]/g,'');
+        let rate=money(get(rateCol));
+        const taxable=money(get(taxableCol));
+        const taxAmount=money(get(taxCol));
+        let gstRate=money(get(gstCol));
+        let total=money(get(totalCol));
+        if(!(rate>0)&&taxable>0)rate=money(taxable/qty);
+        if(!(rate>0)&&total>taxAmount)rate=money((total-taxAmount)/qty);
+        if(gstRate>100)gstRate=0;
+        if(!gstRate&&taxAmount>0&&taxable>0)gstRate=money(taxAmount/taxable*100);
+        if(!(total>0))total=money((taxable||qty*rate)+taxAmount);
+        if(rate>0)addItem(name,hsn,qty,unit,rate,taxable||money(qty*rate),gstRate,taxAmount,total);
       }
     }
   }
