@@ -133,7 +133,7 @@ function parseBill(text){
       const taxableCol=col([/taxable|base value|net value/]);
       const gstCol=col([/gst|tax %|tax rate|gst %/]);
       const taxCol=col([/^tax$|tax amount|gst amount|igst|cgst|sgst/]);
-      const totalCol=col([/^amount$|total|net amount|line total|value/]);
+      const totalCol=col([/^total(?: amount)?$|^amount$|line total|net amount|grand total|final amount/]);
       for(let i=dataStart;i<markdownLines.length;i++){
         if(isSeparator(markdownLines[i]))continue;
         const cells=splitCells(markdownLines[i]);
