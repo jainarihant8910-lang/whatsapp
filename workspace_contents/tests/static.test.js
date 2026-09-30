@@ -16,6 +16,6 @@ must(database, /confirmation_sent = 2/, 'Missing confirmation sending state.');
 if (!database.includes('Number(item.current_stock) !== 0')) throw new Error('Delete guard must require zero stock.');
 if (!server.includes('db.deleteItem(num(req.params.id), req.auth.businessId)')) throw new Error('Delete API is not using the guarded database method.');
 if (!server.includes("COALESCE(i.name,'Deleted product #'")) throw new Error('Transaction history does not handle deleted products.');
-if (!app.includes('deleteProduct(x.id)')) throw new Error('Zero-stock delete button is missing.');
+if (!app.includes('function deleteProduct(id)')) throw new Error('Zero-stock delete action is missing.');
 if (!app.includes('Number(x.current_stock)===0')) throw new Error('Delete button is not restricted to zero stock.');
 console.log('Static regression checks passed.');
