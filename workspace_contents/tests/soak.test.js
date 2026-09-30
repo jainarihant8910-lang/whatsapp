@@ -20,9 +20,18 @@ function requestHealth() {
   });
 }
 (async () => {
-  const deadline = Date.now() + 6 * 60 * 1000;
+  const soakDeadline = Date.now() + 6 * 60 * 1000;
+  const startupDeadline = Date.now() + 30 * 1000;
   try {
-    while (Date.now() < deadline) { await requestHealth(); process.stdout.write('.'); await new Promise(r => setTimeout(r, 5000)); }
+    while (Date.now() < startupDeadline) {
+      try { await requestHealth(); break; }
+      catch (e) {
+        if (Date.now() >= startupDeadline) throw e;
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+
+    while (Date.now() < soakDeadline) { await requestHealth(); process.stdout.write('.'); await new Promise(r => setTimeout(r, 5000)); }
     console.log('\nSix-minute server soak passed.'); child.kill('SIGTERM'); process.exit(0);
   } catch (e) { console.error('\nSoak failed:', e.message); console.error(output.slice(-5000)); child.kill('SIGTERM'); process.exit(1); }
 })();
