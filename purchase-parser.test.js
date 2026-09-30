@@ -28,8 +28,7 @@ const retailText=[
 
 {
   const p=parseBill(retailText);
-  console.log('DEBUG RETAIL ITEMS',JSON.stringify(p.items));
-  assert.strictEqual(p.items.length,2);
+    assert.strictEqual(p.items.length,2);
   assert.deepStrictEqual(p.items.map(x=>x.name),['Croissants','Sourdough Bread']);
   assert.deepStrictEqual(p.items.map(x=>x.quantity),[1,1]);
   assert.deepStrictEqual(p.items.map(x=>x.unit),['PACK','PACK']);
