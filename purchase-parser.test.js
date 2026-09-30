@@ -101,7 +101,7 @@ const looseImageOcr = [
   'SGST 9% 306.00',
   'Total Tax 612.00',
   'Total Amount 4,012.00'
-].join('\\n');
+] .join(String.fromCharCode(10));
 const loose=parseBill(looseImageOcr);
 assert.equal(loose.items.length,2,'loose OCR rows should recover all products');
 assert.deepEqual(loose.items.map(x=>x.quantity),[2,3]);
