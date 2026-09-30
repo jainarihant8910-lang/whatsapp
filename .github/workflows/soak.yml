@@ -14,7 +14,12 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - run: npm install
+        working-directory: workspace_contents
       - run: npm run check
+        working-directory: workspace_contents
       - run: npm run test:parser
+        working-directory: workspace_contents
       - run: npm test
+        working-directory: workspace_contents
       - run: npm run test:soak
+        working-directory: workspace_contents
