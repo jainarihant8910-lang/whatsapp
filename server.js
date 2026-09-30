@@ -78,20 +78,49 @@ async function paddleOcrImage(buf){
   return run;
 }
 
-async function ocrImage(buf){
+async function ocrSpaceOcr(buf,mimeType='image/png'){
+  const apiKey=String(process.env.OCR_SPACE_API_KEY||'').trim();
+  if(!apiKey)throw new Error('OCR_SPACE_API_KEY is not configured');
+
+  const form=new FormData();
+  form.append('file',new Blob([buf],{type:mimeType}),mimeType==='application/pdf'?'bill.pdf':'bill');
+  form.append('language',process.env.OCR_SPACE_LANGUAGE||'auto');
+  form.append('isTable',String(process.env.OCR_SPACE_TABLE||'true'));
+  form.append('OCREngine',String(process.env.OCR_SPACE_ENGINE||'3'));
+  form.append('isOverlayRequired','false');
+
+  const response=await fetch('https://api.ocr.space/parse/image',{
+    method:'POST',
+    headers:{apikey:apiKey},
+    body:form
+  });
+  if(!response.ok)throw new Error('OCR.space HTTP '+response.status);
+  const data=await response.json();
+  if(data.IsErroredOnProcessing){
+    const message=Array.isArray(data.ErrorMessage)?data.ErrorMessage.join('; '):String(data.ErrorMessage||'OCR.space processing failed');
+    throw new Error(message);
+  }
+  const text=Array.isArray(data.ParsedResults)
+    ? data.ParsedResults.map(x=>String(x?.ParsedText||'')).filter(Boolean).join('\n')
+    : '';
+  if(!text.trim())throw new Error('OCR.space returned no text');
+  return text;
+}
+
+async function ocrImage(buf,mimeType='image/png'){
   const opts={logger:x=>{if(x.status==='recognizing text'&&Math.round((x.progress||0)*100)%20===0)console.log('Tesseract OCR',Math.round((x.progress||0)*100)+'%')}};
 
-  // Primary OCR: PaddleOCR PP-OCRv5. It performs text detection + recognition
-  // locally; no invoice data is sent to a third-party OCR API.
+  // Primary OCR: OCR.space Engine 3 with table/receipt mode. Engine 3 is
+  // specifically designed for tables and returns table text in reading order.
   try{
-    const paddleText=await paddleOcrImage(buf);
-    if(paddleText&&paddleText.trim().length>=8)return paddleText;
+    const apiText=await ocrSpaceOcr(buf,mimeType);
+    if(apiText&&apiText.trim().length>=8)return apiText;
   }catch(e){
-    console.log('PaddleOCR unavailable/failed; using Tesseract fallback:',e.message);
+    console.log('OCR.space unavailable/failed; using local OCR fallback:',e.message);
   }
 
-  // Existing OCR remains as a fallback so the website still works when
-  // PaddleOCR has not been installed or the worker/model fails.
+  // Local fallback keeps the application usable if the API key is missing,
+  // the API is temporarily unavailable, or the request is rejected.
   try{
     const r=await Tesseract.recognize(buf,'eng',{...opts,tessedit_pageseg_mode:'4'});
     return r.data.text||'';
@@ -147,7 +176,7 @@ async function extractPdfText(buf){
   return '';
 }
 async function extractText(file){
-  if(file.mimetype!=='application/pdf')return ocrImage(file.buffer);
+  if(file.mimetype!=='application/pdf')return ocrImage(file.buffer,file.mimetype);
   try{return await extractPdfText(file.buffer)}catch(e){console.error('PDF text extraction failed:',e.message);return ''}
 }
 const {parseBill}=require('./purchase-parser');
@@ -325,72 +354,61 @@ app.post('/api/purchases/extract',upload.single('bill'),async(r,s)=>{
     // table layout was extracted poorly.
     if(r.file.mimetype==='application/pdf'){
       try{
-        const pdfScan=await pdfInfoAndScreenshots(r.file.buffer);
-        // A digital PDF may have perfectly extractable text on page 1 but
-        // additional products on later pages. For multi-page bills we OCR every
-        // rendered page and merge it with the native PDF text.
-        // For a one-page bill OCR is used only when native extraction found no rows.
-        const shouldOcr=pdfScan.pages.length>0;
-        if(shouldOcr){
+        // Send the original PDF directly to OCR.space. Its table/receipt mode
+        // preserves invoice row order much better than first rendering a PDF
+        // page into an image and then trying to reconstruct columns.
+        console.log('Purchase OCR: sending original PDF to OCR.space Engine '+String(process.env.OCR_SPACE_ENGINE||'3'));
+        const ocrText=await ocrSpaceOcr(r.file.buffer,'application/pdf');
+        const ocrParsed=parseBill(ocrText);
+        if(ocrParsed.items.length){
+          parsed=mergePurchaseParses(parsed,ocrParsed); parsed={...parsed,
+            supplier_name:ocrParsed.supplier_name||parsed.supplier_name,
+            supplier_gstin:ocrParsed.supplier_gstin||parsed.supplier_gstin,
+            buyer_name:ocrParsed.buyer_name||parsed.buyer_name,
+            buyer_gstin:ocrParsed.buyer_gstin||parsed.buyer_gstin,
+            invoice_number:ocrParsed.invoice_number||parsed.invoice_number,
+            invoice_date:ocrParsed.invoice_date||parsed.invoice_date,
+            taxable_total:ocrParsed.taxable_total||parsed.taxable_total,
+            tax_total:ocrParsed.tax_total||parsed.tax_total,
+            cgst:ocrParsed.cgst||parsed.cgst,
+            sgst:ocrParsed.sgst||parsed.sgst,
+            igst:ocrParsed.igst||parsed.igst,
+            invoice_total:ocrParsed.invoice_total||parsed.invoice_total,
+            raw_text:text+'\\n\\n[OCR.SPACE TABLE OCR]\n'+ocrText
+          };
+          text=parsed.raw_text;
+        }else{
+          console.log('OCR.space returned text but no product rows parsed; trying local rendered-page fallback');
+          const pdfScan=await pdfInfoAndScreenshots(r.file.buffer);
           const chunks=[];
           for(let i=0;i<pdfScan.pages.length;i++){
-            console.log('Purchase OCR page '+(i+1)+'/'+pdfScan.pages.length);
-            const t=await ocrImage(pdfScan.pages[i]);
-            if(t.trim())chunks.push('[PAGE '+(i+1)+']\\n'+t);
+            try{
+              const tr=await Tesseract.recognize(pdfScan.pages[i],'eng',{tessedit_pageseg_mode:'6'});
+              if(tr.data.text&&tr.data.text.trim())chunks.push('[PAGE '+(i+1)+']\\n'+tr.data.text);
+            }catch(e){console.error('Purchase PDF local OCR fallback failed on page '+(i+1)+':',e.message)}
           }
-          const ocrText=chunks.join('\\n\\n');
-          if(ocrText.trim()){
-            const ocrParsed=parseBill(ocrText);
-            if(ocrParsed.items.length){
-              parsed=mergePurchaseParses(parsed,ocrParsed); parsed={...parsed,
-                supplier_name:ocrParsed.supplier_name||parsed.supplier_name,
-                supplier_gstin:ocrParsed.supplier_gstin||parsed.supplier_gstin,
-                buyer_name:ocrParsed.buyer_name||parsed.buyer_name,
-                buyer_gstin:ocrParsed.buyer_gstin||parsed.buyer_gstin,
-                invoice_number:ocrParsed.invoice_number||parsed.invoice_number,
-                invoice_date:ocrParsed.invoice_date||parsed.invoice_date,
-                taxable_total:ocrParsed.taxable_total||parsed.taxable_total,
-                tax_total:ocrParsed.tax_total||parsed.tax_total,
-                cgst:ocrParsed.cgst||parsed.cgst,
-                sgst:ocrParsed.sgst||parsed.sgst,
-                igst:ocrParsed.igst||parsed.igst,
-                invoice_total:ocrParsed.invoice_total||parsed.invoice_total,
-                raw_text:text+'\\n\\n[OCR FALLBACK - PADDLE ALL PAGES]\\n'+ocrText
-              };
-              text=parsed.raw_text;
-            }else{
-              console.log('PaddleOCR text found but no product rows parsed; trying Tesseract table fallback');
-              const tesseractChunks=[];
-              for(let i=0;i<pdfScan.pages.length;i++){
-                try{
-                  const tr=await Tesseract.recognize(pdfScan.pages[i],'eng',{tessedit_pageseg_mode:'6'});
-                  if(tr.data.text&&tr.data.text.trim())tesseractChunks.push('[PAGE '+(i+1)+']\\n'+tr.data.text);
-                }catch(e){console.error('Purchase PDF Tesseract fallback failed on page '+(i+1)+':',e.message)}
-              }
-              const tesseractText=tesseractChunks.join('\\n\\n');
-              const tesseractParsed=parseBill(tesseractText);
-              if(tesseractParsed.items.length){
-                parsed=mergePurchaseParses(parsed,tesseractParsed); parsed={...parsed,
-                  supplier_name:tesseractParsed.supplier_name||parsed.supplier_name,
-                  supplier_gstin:tesseractParsed.supplier_gstin||parsed.buyer_gstin,
-                  buyer_name:tesseractParsed.buyer_name||parsed.buyer_name,
-                  buyer_gstin:tesseractParsed.buyer_gstin||parsed.buyer_gstin,
-                  invoice_number:tesseractParsed.invoice_number||parsed.invoice_number,
-                  invoice_date:tesseractParsed.invoice_date||parsed.invoice_date,
-                  taxable_total:tesseractParsed.taxable_total||parsed.taxable_total,
-                  tax_total:tesseractParsed.tax_total||parsed.tax_total,
-                  cgst:tesseractParsed.cgst||parsed.cgst,
-                  sgst:tesseractParsed.sgst||parsed.sgst,
-                  igst:tesseractParsed.igst||parsed.igst,
-                  invoice_total:tesseractParsed.invoice_total||parsed.invoice_total,
-                  raw_text:text+'\\n\\n[OCR FALLBACK - PADDLE]\\n'+ocrText+'\\n\\n[OCR FALLBACK - TESSERACT]\\n'+tesseractText
-                };
-                text=parsed.raw_text;
-              }
-            }
+          const fallbackText=chunks.join('\\n\\n');
+          const fallbackParsed=parseBill(fallbackText);
+          if(fallbackParsed.items.length){
+            parsed=mergePurchaseParses(parsed,fallbackParsed); parsed={...parsed,
+              supplier_name:fallbackParsed.supplier_name||parsed.supplier_name,
+              supplier_gstin:fallbackParsed.supplier_gstin||parsed.supplier_gstin,
+              buyer_name:fallbackParsed.buyer_name||parsed.buyer_name,
+              buyer_gstin:fallbackParsed.buyer_gstin||parsed.buyer_gstin,
+              invoice_number:fallbackParsed.invoice_number||parsed.invoice_number,
+              invoice_date:fallbackParsed.invoice_date||parsed.invoice_date,
+              taxable_total:fallbackParsed.taxable_total||parsed.taxable_total,
+              tax_total:fallbackParsed.tax_total||parsed.tax_total,
+              cgst:fallbackParsed.cgst||parsed.cgst,
+              sgst:fallbackParsed.sgst||parsed.sgst,
+              igst:fallbackParsed.igst||parsed.igst,
+              invoice_total:fallbackParsed.invoice_total||parsed.invoice_total,
+              raw_text:text+'\\n\\n[OCR.SPACE]\n'+ocrText+'\\n\\n[LOCAL TESSERACT FALLBACK]\n'+fallbackText
+            };
+            text=parsed.raw_text;
           }
         }
-      }catch(e){console.error('Purchase PDF OCR fallback failed:',e.message)}
+      }catch(e){console.error('OCR.space PDF processing failed; trying local rendered-page OCR:',e.message)}
     }
 
     if(!parsed.items.length)return s.status(422).json({
