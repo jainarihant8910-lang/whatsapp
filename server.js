@@ -1,5 +1,5 @@
 require('dotenv').config();
-const express=require('express'); const path=require('path'); const crypto=require('crypto'); const fs=require('fs'); const os=require('os'); const {spawn}=require('child_process'); const multer=require('multer'); const pdfParse=require('pdf-parse'); const Tesseract=require('tesseract.js'); const PDFDocument=require('pdfkit'); const db=require('./platform-db');
+const express=require('express'); const path=require('path'); const crypto=require('crypto'); const fs=require('fs'); const os=require('os'); const {spawn}=require('child_process'); const sharp=require('sharp'); const multer=require('multer'); const pdfParse=require('pdf-parse'); const Tesseract=require('tesseract.js'); const PDFDocument=require('pdfkit'); const db=require('./platform-db');
 const app=express(); const PORT=Number(process.env.PORT)||3000; const PUBLIC=path.join(__dirname,'public');
 app.use(express.json({limit:'3mb'})); app.use(express.urlencoded({extended:true})); app.use(express.static(PUBLIC));
 function cookieToken(req){const m=String(req.headers.cookie||'').match(/(?:^|;)\s*dm_token=([^;]+)/);return m?decodeURIComponent(m[1]):''}
@@ -7,19 +7,15 @@ async function auth(req,res,next){try{const s=await db.session(cookieToken(req))
 function csrf(req,res,next){if(['GET','HEAD','OPTIONS'].includes(req.method))return next();const c=String(req.headers['x-csrf-token']||'');if(!c)return res.status(403).json({error:'CSRF token missing'});db.get('SELECT csrf_hash FROM sessions WHERE token_hash=?',[crypto.createHash('sha256').update(cookieToken(req)).digest('hex')]).then(s=>{if(!s||s.csrf_hash!==crypto.createHash('sha256').update(c).digest('hex'))return res.status(403).json({error:'Invalid CSRF token'});next()}).catch(e=>res.status(500).json({error:e.message}))}
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:25*1024*1024},fileFilter:(r,f,cb)=>cb(null,['application/pdf','image/jpeg','image/png','image/webp'].includes(f.mimetype))});
 function hash(buf){return crypto.createHash('sha256').update(buf).digest('hex')}
-function normalizeImageForOcr(buf){
-  return new Promise((resolve,reject)=>{
-    const p=spawn('convert',['-','-auto-orient','-resize','2200x2200>','-colorspace','Gray','-contrast-stretch','0x8%','-sharpen','0x1','-quality','82','jpg:-'],{stdio:['pipe','pipe','pipe']});
-    const out=[]; const err=[];
-    p.stdout.on('data',x=>out.push(x));
-    p.stderr.on('data',x=>err.push(x));
-    p.on('error',reject);
-    p.on('close',(code)=>{
-      if(code===0&&Buffer.concat(out).length)return resolve(Buffer.concat(out));
-      reject(new Error(String(Buffer.concat(err).toString()||'Image normalization failed')));
-    });
-    p.stdin.end(buf);
-  });
+async function normalizeImageForOcr(buf){
+  return sharp(buf)
+    .rotate()
+    .resize({width:2200,height:2200,fit:'inside',withoutEnlargement:true})
+    .grayscale()
+    .normalize()
+    .sharpen()
+    .jpeg({quality:82,mozjpeg:true})
+    .toBuffer();
 }
 let paddleWorker=null;
 let paddleWorkerBuffer='';
