@@ -612,16 +612,23 @@ async function startBusiness(businessId, force = false) {
             ).join('\\n') +
             '\\n\\n_Stock transaction recorded in DeliveryOS._';
 
-          const sent = await client.sendMessage(from, reply, {
-            ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
-            ignoreQuoteErrors: true,
-            waitUntilMsgSent: true
-          });
-          if (!sent) throw new Error('WhatsApp returned no sent message');
+          // whatsapp-web.js can successfully deliver a message while returning
+          // no message object. Never turn a successful stock transaction into
+          // a false "STOCK NOT ADDED" reply just because the return value is empty.
+          try {
+            await client.sendMessage(from, reply, {
+              ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
+              ignoreQuoteErrors: true,
+              waitUntilMsgSent: true
+            });
+          } catch (sendError) {
+            // Stock is already committed. Do NOT send a second failure message.
+            console.error('WhatsApp stock-in reply failed after stock was added:', sendError.message);
+          }
           await db.setWa(businessId, 'CONNECTED', 'Stock added via WhatsApp by ' + senderPhone, null).catch(() => {});
           console.log('WhatsApp stock-in processed:', added.map(x => x.name + ' +' + x.quantity).join(', '));
         } catch (e) {
-          console.error('WhatsApp stock-in failed:', e.message);
+          console.error('WhatsApp stock-in failed before commit:', e.message);
           try {
             await client.sendMessage(from, '❌ *STOCK NOT ADDED*\\n\\n' + e.message + '\\n_No stock was changed._', {
               ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
