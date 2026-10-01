@@ -121,7 +121,18 @@ function parseBill(text){
   const sellerGstinLabel=maskedGstin(/^GSTIN\\s*[:#-]?/i);
   const sellerGstin=gstins.length>1?gstins[gstins.length-1]:(sellerGstinLabel||'');
   const sellerPan=pan&&pan!==buyerPan?pan:'';
-  const sellerAddress=findLabel(['Address','Office Address','Registered Address'],5);
+  let sellerAddress='';
+  const sellerStart=sellerName?lines.findIndex(x=>String(x).trim()===String(sellerName).trim()):-1;
+  const sellerEnd=billToIdx>=0?billToIdx:Math.min(lines.length,(sellerStart>=0?sellerStart+8:10));
+  if(sellerStart>=0){
+    const addressParts=[];
+    for(let i=sellerStart+1;i<sellerEnd;i++){
+      const s=String(lines[i]||'').trim();
+      if(!s||/^GSTIN\b|^Contact\b|^Phone\b|^Mobile\b/i.test(s))continue;
+      if(/^General Store\b/i.test(s)||/^#\s*S-/i.test(s)||/Building|Estate|Delhi-/i.test(s))addressParts.push(s);
+    }
+    sellerAddress=addressParts.join(', ');
+  }
   const sellerPhone=findLabel(['Contact No','Contact Number','Phone','Mobile'],4);
   const sellerState=findLabel(['State'],4);
   const sellerStateCode=(sellerState.match(/(?:^|[-\\s])([0-9]{1,2})$/)||[])[1]||'';
