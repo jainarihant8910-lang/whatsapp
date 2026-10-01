@@ -1,6 +1,6 @@
 DELIVERYOS
 
-Multi-business WhatsApp delivery, inventory, purchase-bill OCR and GST invoicing platform.
+Multi-business WhatsApp delivery, inventory and GST invoicing platform.
 
 FEATURES
 - Firm ID + password authentication with salted PBKDF2 password hashes.
@@ -14,8 +14,6 @@ FEATURES
 - No negative stock and no partial item fulfillment.
 - Confirmation reply is sent after processing; failed replies remain PENDING.
 - Product master with HSN, unit, purchase price, selling price and GST rate.
-- Purchase PDF/image extraction with review before stock changes.
-- New products in confirmed purchase bills are created automatically.
 - GST invoice drafts, finalization and cancellation with stock movements.
 - A4-style PDF invoices and order PDFs.
 - Responsive mobile dashboard.
