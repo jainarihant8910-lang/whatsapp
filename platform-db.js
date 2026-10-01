@@ -168,7 +168,7 @@ async function createInvoice(b,d){
         const linked=await get('SELECT io.invoice_id,i.status FROM invoice_orders io JOIN invoices i ON i.id=io.invoice_id WHERE io.business_id=? AND io.order_id=? AND i.status<>"CANCELLED"',[b,oid]);
         if(linked)throw Error('Order #'+oid+' is already included in invoice '+linked.invoice_id);
         const oi=await all('SELECT oi.*,COALESCE((SELECT SUM(ri.quantity) FROM order_return_items ri JOIN order_returns rr ON rr.id=ri.return_id WHERE ri.business_id=? AND rr.order_id=? AND ri.order_item_id=oi.id),0) returned_quantity FROM order_items oi WHERE oi.business_id=? AND oi.order_id=? AND oi.accepted_quantity>0',[b,oid,b,oid]);
-        orderRows.push(...oi.map(x=>({...x,remaining_quantity:Math.max(0,Number(x.accepted_quantity||0)-Number(x.returned_quantity||0))}).filter(x=>x.remaining_quantity>0));
+        orderRows.push(...oi.map(x=>({...x,remaining_quantity:Math.max(0,Number(x.accepted_quantity||0)-Number(x.returned_quantity||0))})).filter(x=>x.remaining_quantity>0));
       }
       if(!orderRows.length)throw Error('Selected orders have no billable remaining quantities');
       d.items=orderRows.map(x=>({item_id:x.item_id,quantity:x.remaining_quantity,rate:x.rate,unit:x.unit,hsn_code:x.hsn_code,gst_rate:x.gst_rate,item_name:x.item_name}));
