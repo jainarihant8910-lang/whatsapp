@@ -103,8 +103,14 @@ function parseBill(text){
   const addItem=(name,hsn,q,unit,rate,taxable,gstRate,taxAmount,lineTotal)=>{
     name=clean(name).replace(/^[:\-]+|[:\-]+$/g,'').trim(); hsn=clean(hsn);
     if(!name||!(q>0)||!(rate>0))return;
+    // Footer/summary text can be misread as a numbered product row by OCR.
+    // Reject invoice totals, tax summaries, payment/balance labels and other
+    // non-product descriptions before they can ever enter stock.
+    const nameLower=name.toLowerCase().replace(/[^a-z0-9%]+/g,' ').trim();
     if(/^(?:total|taxable amount|tax|invoice|amount|grand total|sr\.?|no\.?|name of product|product|service)$/i.test(name))return;
-    if(/(?:^|\s)(?:phone|gstin|invoice no|challan no|e[- ]?way|transport|customer detail)(?:\s|:)/i.test(name))return;
+    if(/(?:^|\\s)(?:total|subtotal|grand total|bill amount|invoice amount|total amount|amount after tax|amount due|net amount|taxable amount|total tax|tax amount|cgst|sgst|igst|cess|round off|rounding|discount|balance due|paid amount|payment|amount in words|terms and conditions|bank details)(?:\\s|:|$)/i.test(nameLower))return;
+    if(/(?:^|\\s)(?:phone|gstin|invoice no|challan no|e[- ]?way|transport|customer detail)(?:\\s|:)/i.test(nameLower))return;
+    if(/^(?:rs|inr|rupees)?\\s*[\\d,]+(?:\\.\\d+)?(?:\\s+(?:only|rupees))?$/i.test(nameLower))return;
     const normalizedName=name.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
     const duplicate=items.find(x=>{
       const existingName=String(x.name||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
