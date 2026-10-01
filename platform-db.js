@@ -79,20 +79,39 @@ async function delSender(b,id){return run('DELETE FROM senders WHERE business_id
   })||null;
 }
 async function lid(b,l){const r=await get('SELECT phone FROM whatsapp_lid_map WHERE business_id=? AND lid=?',[b,l]);return r?.phone||null} async function saveLid(b,l,p){return run('INSERT INTO whatsapp_lid_map(business_id,lid,phone) VALUES(?,?,?) ON CONFLICT(business_id,lid) DO UPDATE SET phone=excluded.phone',[b,l,normalizePhone(p)])}
-function normalizeProductText(v){return String(v||'').toLowerCase().normalize('NFKC').replace(/&/g,' and ').replace(/[^a-z0-9]+/g,' ').trim().replace(/\\s+/g,' ')}
-async function findOrderProduct(b,name){
-  const raw=clean(name), norm=normalizeProductText(raw);
-  if(!raw)return null;
-  let p=await get('SELECT * FROM items WHERE business_id=? AND name=? COLLATE NOCASE',[b,raw]);
-  if(p)return p;
-  p=await get('SELECT * FROM items WHERE business_id=? AND sku=? COLLATE NOCASE',[b,raw]);
-  if(p)return p;
-  if(norm){
-    const a=await get('SELECT item_id FROM product_aliases WHERE business_id=? AND normalized_alias=?',[b,norm]);
-    if(a)return get('SELECT * FROM items WHERE business_id=? AND id=?',[b,a.item_id]);
-  }
-  return null;
+function normalizeProductText(v){return String(v||'').toLowerCase().normalize('NFKC').replace(/&/g,' and ').replace(/(\\d)([a-z])/g,'$1 $2').replace(/([a-z])(\\d)/g,'$1 $2').replace(/[^a-z0-9]+/g,' ').trim().replace(/\\s+/g,' ')}
+const SMART_STOPWORDS=new Set(['the','a','an','and','or','of','for','to','with','item','items','product','products','piece','pieces','pc','pcs','pack','packs','box','boxes','set','sets','unit','units','sheet','sheets']);
+function editSimilarity(a,b){a=String(a||'');b=String(b||'');if(a===b)return 1;if(!a||!b)return 0;const prev=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){let cur=[i];for(let j=1;j<=b.length;j++)cur[j]=Math.min(cur[j-1]+1,prev[j]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));for(let j=0;j<=b.length;j++)prev[j]=cur[j]}return 1-prev[b.length]/Math.max(a.length,b.length)}
+function smartProductScore(input,label){
+  const a=normalizeProductText(input),b=normalizeProductText(label);if(!a||!b)return 0;
+  const at=a.split(' ').filter(Boolean),bt=b.split(' ').filter(Boolean);
+  const meaningful=at.filter(x=>!SMART_STOPWORDS.has(x));
+  if(!meaningful.length)return 0;
+  const matched=meaningful.filter(x=>bt.some(y=>y===x||y.startsWith(x)||x.startsWith(y))).length;
+  const coverage=matched/meaningful.length;
+  const compact=editSimilarity(a,b);
+  const contains=b.includes(a)||a.includes(b);
+  let score=coverage*(meaningful.length===1?0.78:0.9)+compact*0.18+(contains?0.08:0);
+  if(meaningful.length>1&&coverage===1)score=Math.min(0.99,score+0.06);
+  return Math.min(0.99,score);
 }
+async function resolveOrderProduct(b,name){
+  const raw=clean(name),norm=normalizeProductText(raw);if(!raw)return {match:'none',product:null,candidates:[]};
+  let p=await get('SELECT * FROM items WHERE business_id=? AND name=? COLLATE NOCASE',[b,raw]);
+  if(p)return {match:'exact',product:p,candidates:[]};
+  p=await get('SELECT * FROM items WHERE business_id=? AND sku=? COLLATE NOCASE',[b,raw]);
+  if(p)return {match:'sku',product:p,candidates:[]};
+  if(norm){const a=await get('SELECT item_id FROM product_aliases WHERE business_id=? AND normalized_alias=?',[b,norm]);if(a){p=await get('SELECT * FROM items WHERE business_id=? AND id=?',[b,a.item_id]);if(p)return {match:'alias',product:p,candidates:[]}}}
+  const products=await all('SELECT * FROM items WHERE business_id=?',[b]);
+  const aliasRows=norm?await all('SELECT item_id,alias FROM product_aliases WHERE business_id=?',[b]):[];
+  const aliasesByItem=new Map();for(const a of aliasRows){if(!aliasesByItem.has(a.item_id))aliasesByItem.set(a.item_id,[]);aliasesByItem.get(a.item_id).push(a.alias)}
+  const ranked=products.map(x=>{const labels=[x.name,x.sku,...(aliasesByItem.get(x.id)||[])].filter(Boolean);const score=Math.max(...labels.map(label=>smartProductScore(raw,label)),0);return {product:x,score}}).filter(x=>x.score>=0.72).sort((a,b)=>b.score-a.score);
+  if(!ranked.length)return {match:'none',product:null,candidates:[]};
+  const top=ranked[0],second=ranked[1];
+  if(second&&top.score<0.92&&(top.score-second.score)<0.10)return {match:'ambiguous',product:null,candidates:ranked.slice(0,5).map(x=>({id:x.product.id,name:x.product.name,sku:x.product.sku,score:Number(x.score.toFixed(2))}))};
+  return {match:'fuzzy',product:top.product,candidates:[]};
+}
+async function findOrderProduct(b,name){const r=await resolveOrderProduct(b,name);return r.product||null}
 async function hsnMaster(b){return all('SELECT * FROM hsn_master WHERE business_id=? ORDER BY code',[b])}
 async function addHsn(b,d){
   const code=String(d.code||'').replace(/\\s/g,'').trim();
@@ -110,7 +129,38 @@ async function addAlias(b,itemId,alias){
   const r=await run('INSERT INTO product_aliases(business_id,item_id,alias,normalized_alias) VALUES(?,?,?,?)',[b,itemId,a,n]);return get('SELECT * FROM product_aliases WHERE id=?',[r.lastID]);
 }
 async function deleteAlias(b,id){return run('DELETE FROM product_aliases WHERE business_id=? AND id=?',[b,id])}
-async function createOrder(o){await run('BEGIN IMMEDIATE');try{const dup=await get('SELECT id FROM orders WHERE business_id=? AND whatsapp_message_id=?',[o.businessId,o.whatsappMessageId]);if(dup){await run('ROLLBACK');return order(o.businessId,dup.id)}const totalRequested=(o.items||[]).reduce((sum,x)=>sum+Math.max(0,Number(x.quantity)||0),0);const r=await run('INSERT INTO orders(business_id,date,time,delivered_to,sender_id,whatsapp_message_id,whatsapp_from,total_items) VALUES(?,?,?,?,?,?,?,?)',[o.businessId,o.date,o.time,o.deliveredTo,o.senderId,o.whatsappMessageId,o.whatsappFrom,totalRequested]);let acceptedQty=0,rejectedQty=0;for(const x of o.items){const name=clean(x.item),q=Number(x.quantity),p=await findOrderProduct(o.businessId,name);if(!p){rejectedQty+=Math.max(0,q);await run('INSERT INTO order_items(business_id,order_id,item_name,requested_quantity,rejected_quantity,status,rejection_reason) VALUES(?,?,?,?,?,?,?)',[o.businessId,r.lastID,name,q,q,'REJECTED','Product not found in stock']);continue}if(!(q>0)){continue}if(Number(p.current_stock)<q){rejectedQty+=q;await run('INSERT INTO order_items(business_id,order_id,item_id,item_name,requested_quantity,rejected_quantity,status,rejection_reason,unit,rate,hsn_code,gst_rate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',[o.businessId,r.lastID,p.id,p.name,q,q,'REJECTED','Insufficient stock',p.unit,p.selling_price,p.hsn_code,p.gst_rate]);continue}const taxable=money(q*p.selling_price),tax=money(taxable*p.gst_rate/100);const oi=await run('INSERT INTO order_items(business_id,order_id,item_id,item_name,requested_quantity,accepted_quantity,status,unit,rate,hsn_code,gst_rate,taxable_value,total_tax,line_total) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',[o.businessId,r.lastID,p.id,p.name,q,q,'ACCEPTED',p.unit,p.selling_price,p.hsn_code,p.gst_rate,taxable,tax,money(taxable+tax)]);await run('UPDATE items SET current_stock=current_stock-? WHERE business_id=? AND id=?',[q,o.businessId,p.id]);await run('INSERT INTO stock_transactions(business_id,item_id,type,quantity,reason,order_id,order_item_id) VALUES(?,?,"OUT",?,?,?,?)',[o.businessId,p.id,q,'WhatsApp delivery to '+o.deliveredTo,r.lastID,oi.lastID]);acceptedQty+=q}const status=acceptedQty>0&&rejectedQty>0?'PARTIAL':acceptedQty>0?'SUCCESS':'REJECTED';await run('UPDATE orders SET accepted_items=?,rejected_items=?,status=? WHERE id=?',[acceptedQty,rejectedQty,status,r.lastID]);await run('INSERT OR IGNORE INTO processed_messages(business_id,message_id,whatsapp_from,sender_phone,body) VALUES(?,?,?,?,?)',[o.businessId,o.whatsappMessageId,o.whatsappFrom,o.senderPhone,o.body]);await run('COMMIT');return order(o.businessId,r.lastID)}catch(e){await run('ROLLBACK').catch(()=>{});throw e}}
+async function createOrder(o){
+  const inputItems=Array.isArray(o.items)?o.items:[];
+  const resolved=[];
+  for(const x of inputItems){
+    const q=Number(x.quantity),r=await resolveOrderProduct(o.businessId,x.item);
+    if(r.match==='ambiguous'){const e=Error('Multiple products match "'+clean(x.item)+'"');e.code='AMBIGUOUS_PRODUCT';e.input=clean(x.item);e.candidates=r.candidates;throw e}
+    resolved.push({input:x,quantity:q,result:r});
+  }
+  await run('BEGIN IMMEDIATE');
+  try{
+    const dup=await get('SELECT id FROM orders WHERE business_id=? AND whatsapp_message_id=?',[o.businessId,o.whatsappMessageId]);
+    if(dup){await run('ROLLBACK');return order(o.businessId,dup.id)}
+    const totalRequested=inputItems.reduce((sum,x)=>sum+Math.max(0,Number(x.quantity)||0),0);
+    const r=await run('INSERT INTO orders(business_id,date,time,delivered_to,sender_id,whatsapp_message_id,whatsapp_from,total_items) VALUES(?,?,?,?,?,?,?,?)',[o.businessId,o.date,o.time,o.deliveredTo,o.senderId,o.whatsappMessageId,o.whatsappFrom,totalRequested]);
+    let acceptedQty=0,rejectedQty=0;
+    for(const row of resolved){
+      const x=row.input,name=clean(x.item),q=row.quantity,p=row.result.product;
+      if(!p){rejectedQty+=Math.max(0,q);await run('INSERT INTO order_items(business_id,order_id,item_name,requested_quantity,rejected_quantity,status,rejection_reason) VALUES(?,?,?,?,?,?,?)',[o.businessId,r.lastID,name,q,q,'REJECTED','Product not found in stock']);continue}
+      if(!(q>0))continue;
+      if(Number(p.current_stock)<q){rejectedQty+=q;await run('INSERT INTO order_items(business_id,order_id,item_id,item_name,requested_quantity,rejected_quantity,status,rejection_reason,unit,rate,hsn_code,gst_rate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',[o.businessId,r.lastID,p.id,p.name,q,q,'REJECTED','Insufficient stock',p.unit,p.selling_price,p.hsn_code,p.gst_rate]);continue}
+      const taxable=money(q*p.selling_price),tax=money(taxable*p.gst_rate/100);
+      const oi=await run('INSERT INTO order_items(business_id,order_id,item_id,item_name,requested_quantity,accepted_quantity,status,unit,rate,hsn_code,gst_rate,taxable_value,total_tax,line_total) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',[o.businessId,r.lastID,p.id,p.name,q,q,'ACCEPTED',p.unit,p.selling_price,p.hsn_code,p.gst_rate,taxable,tax,money(taxable+tax)]);
+      await run('UPDATE items SET current_stock=current_stock-? WHERE business_id=? AND id=?',[q,o.businessId,p.id]);
+      await run('INSERT INTO stock_transactions(business_id,item_id,type,quantity,reason,order_id,order_item_id) VALUES(?,?,"OUT",?,?,?,?)',[o.businessId,p.id,q,'WhatsApp delivery to '+o.deliveredTo,r.lastID,oi.lastID]);
+      acceptedQty+=q;
+    }
+    const status=acceptedQty>0&&rejectedQty>0?'PARTIAL':acceptedQty>0?'SUCCESS':'REJECTED';
+    await run('UPDATE orders SET accepted_items=?,rejected_items=?,status=? WHERE id=?',[acceptedQty,rejectedQty,status,r.lastID]);
+    await run('INSERT OR IGNORE INTO processed_messages(business_id,message_id,whatsapp_from,sender_phone,body) VALUES(?,?,?,?,?)',[o.businessId,o.whatsappMessageId,o.whatsappFrom,o.senderPhone,o.body]);
+    await run('COMMIT');return order(o.businessId,r.lastID);
+  }catch(e){await run('ROLLBACK').catch(()=>{});throw e}
+}
 async function orders(b){const rows=await all("SELECT o.*,s.name sender_name,s.whatsapp_id sender_phone FROM orders o LEFT JOIN senders s ON s.id=o.sender_id WHERE o.business_id=? ORDER BY o.id DESC LIMIT 1000",[b]);for(const o of rows){const sums=await get("SELECT COALESCE(SUM(accepted_quantity),0) accepted_qty,COALESCE(SUM(rejected_quantity),0) rejected_qty FROM order_items WHERE business_id=? AND order_id=?",[b,o.id]);const ret=await get("SELECT COALESCE(SUM(ri.quantity),0) returned_qty FROM order_return_items ri JOIN order_returns rr ON rr.id=ri.return_id WHERE ri.business_id=? AND rr.order_id=?",[b,o.id]);o.accepted_items=Number(sums?.accepted_qty||0);o.rejected_items=Number(sums?.rejected_qty||0);o.returned_items=Number(ret?.returned_qty||0);o.item_names=(await all("SELECT COALESCE(i.name,oi.item_name) item_name FROM order_items oi LEFT JOIN items i ON i.business_id=oi.business_id AND i.id=oi.item_id WHERE oi.business_id=? AND oi.order_id=? AND oi.accepted_quantity>0 ORDER BY oi.id",[b,o.id])).map(x=>x.item_name).join(', ');if(o.returned_items>0)o.status=o.returned_items>=o.accepted_items?'RETURNED':'PARTIAL_RETURN';}return rows}
 async function order(b,id){const o=await get("SELECT o.*,s.name sender_name,s.whatsapp_id sender_phone FROM orders o LEFT JOIN senders s ON s.id=o.sender_id WHERE o.business_id=? AND o.id=?",[b,id]);if(o){o.items=await all("SELECT oi.*,COALESCE(i.name,oi.item_name) item_name,COALESCE((SELECT SUM(ri.quantity) FROM order_return_items ri JOIN order_returns rr ON rr.id=ri.return_id WHERE ri.business_id=? AND rr.order_id=? AND ri.order_item_id=oi.id),0) returned_quantity FROM order_items oi LEFT JOIN items i ON i.business_id=oi.business_id AND i.id=oi.item_id WHERE oi.business_id=? AND oi.order_id=?",[b,id,b,id]);o.accepted_items=o.items.reduce((s,x)=>s+Number(x.accepted_quantity||0),0);o.rejected_items=o.items.reduce((s,x)=>s+Number(x.rejected_quantity||0),0);o.returned_items=o.items.reduce((s,x)=>s+Number(x.returned_quantity||0),0);o.item_names=o.items.filter(x=>Number(x.accepted_quantity||0)>0).map(x=>x.item_name).join(', ');for(const x of o.items){x.remaining_quantity=Math.max(0,Number(x.accepted_quantity||0)-Number(x.returned_quantity||0));}if(o.returned_items>0)o.status=o.returned_items>=o.accepted_items?'RETURNED':'PARTIAL_RETURN';}return o}
 async function returnsForOrder(b,id){return all('SELECT r.*,COUNT(ri.id) item_lines FROM order_returns r LEFT JOIN order_return_items ri ON ri.return_id=r.id WHERE r.business_id=? AND r.order_id=? GROUP BY r.id ORDER BY r.id DESC',[b,id])}
