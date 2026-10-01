@@ -34,7 +34,7 @@ async function init(){
  await run('CREATE TABLE IF NOT EXISTS purchase_bills(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER NOT NULL,original_filename TEXT,file_type TEXT,file_hash TEXT,supplier_name TEXT DEFAULT "",supplier_gstin TEXT DEFAULT "",supplier_address TEXT DEFAULT "",invoice_number TEXT DEFAULT "",invoice_date TEXT DEFAULT "",place_of_supply TEXT DEFAULT "",raw_text TEXT DEFAULT "",status TEXT DEFAULT "REVIEW",created_at TEXT DEFAULT CURRENT_TIMESTAMP,confirmed_at TEXT,UNIQUE(business_id,file_hash))');
  await run('CREATE TABLE IF NOT EXISTS purchase_bill_items(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER NOT NULL,purchase_bill_id INTEGER NOT NULL,extracted_name TEXT,matched_item_id INTEGER,quantity REAL,unit TEXT DEFAULT "PCS",purchase_price REAL DEFAULT 0,gst_rate REAL DEFAULT 0,hsn_code TEXT DEFAULT "",taxable_value REAL DEFAULT 0,tax_amount REAL DEFAULT 0,line_total REAL DEFAULT 0,is_new_item INTEGER DEFAULT 0)');
  const migrations=[
-  ['orders','returned_items','INTEGER DEFAULT 0'],['orders','return_status','TEXT DEFAULT "NONE"'],['invoices','source_type','TEXT DEFAULT "MANUAL"'],
+  ['orders','returned_items','INTEGER DEFAULT 0'],['orders','return_status','TEXT DEFAULT "NONE"'],['orders','source_type','TEXT DEFAULT "WHATSAPP"'],['invoices','source_type','TEXT DEFAULT "ORDERS"'],
   ['orders','returned_items','INTEGER DEFAULT 0'],['orders','return_status','TEXT DEFAULT "NONE"'],
   ['purchase_bills','buyer_name','TEXT DEFAULT ""'],['purchase_bills','buyer_gstin','TEXT DEFAULT ""'],['purchase_bills','buyer_address','TEXT DEFAULT ""'],['purchase_bills','buyer_state','TEXT DEFAULT ""'],['purchase_bills','buyer_state_code','TEXT DEFAULT ""'],['purchase_bills','payment_method','TEXT DEFAULT ""'],['purchase_bills','reverse_charge','TEXT DEFAULT ""'],['purchase_bills','buyer_order_number','TEXT DEFAULT ""'],['purchase_bills','supplier_reference','TEXT DEFAULT ""'],['purchase_bills','vehicle_number','TEXT DEFAULT ""'],['purchase_bills','delivery_date','TEXT DEFAULT ""'],['purchase_bills','transport_details','TEXT DEFAULT ""'],['purchase_bills','terms_of_delivery','TEXT DEFAULT ""'],['purchase_bills','buyer_pan','TEXT DEFAULT ""'],['purchase_bills','seller_pan','TEXT DEFAULT ""'],['purchase_bills','seller_phone','TEXT DEFAULT ""'],['purchase_bills','seller_address','TEXT DEFAULT ""'],['purchase_bills','seller_state','TEXT DEFAULT ""'],['purchase_bills','seller_state_code','TEXT DEFAULT ""'],['purchase_bills','seller_id','TEXT DEFAULT ""'],['purchase_bills','buyer_id','TEXT DEFAULT ""'],['purchase_bills','challan_number','TEXT DEFAULT ""'],['purchase_bills','challan_date','TEXT DEFAULT ""'],['purchase_bills','eway_bill_number','TEXT DEFAULT ""'],['purchase_bills','transport','TEXT DEFAULT ""'],['purchase_bills','transport_id','TEXT DEFAULT ""'],['purchase_bills','taxable_total','REAL DEFAULT 0'],['purchase_bills','tax_total','REAL DEFAULT 0'],['purchase_bills','cgst','REAL DEFAULT 0'],['purchase_bills','sgst','REAL DEFAULT 0'],['purchase_bills','igst','REAL DEFAULT 0'],['purchase_bills','invoice_total','REAL DEFAULT 0'],['purchase_bills','round_off','REAL DEFAULT 0'],['purchase_bill_items','supplier_sku','TEXT DEFAULT ""']
  ];
@@ -145,18 +145,19 @@ async function createOrder(o){
       shortages.push({name:p.name,sku:p.sku||'',requested:q,available:Number(p.current_stock||0),unit:p.unit||'PCS'});
     }
   }
+  if(shortages.length && String(o.sourceType||'WHATSAPP').toUpperCase()==='MANUAL'){
+    const e=Error('Insufficient stock for one or more products'); e.code='INSUFFICIENT_STOCK'; e.shortages=shortages; throw e;
+  }
   if(shortages.length){
     const e=Error('Insufficient stock requires sender confirmation');
-    e.code='INSUFFICIENT_STOCK_CONFIRMATION';
-    e.shortages=shortages;
-    throw e;
+    e.code='INSUFFICIENT_STOCK_CONFIRMATION'; e.shortages=shortages; throw e;
   }
   await run('BEGIN IMMEDIATE');
   try{
     const dup=await get('SELECT id FROM orders WHERE business_id=? AND whatsapp_message_id=?',[o.businessId,o.whatsappMessageId]);
     if(dup){await run('ROLLBACK');return order(o.businessId,dup.id)}
     const totalRequested=inputItems.reduce((sum,x)=>sum+Math.max(0,Number(x.quantity)||0),0);
-    const r=await run('INSERT INTO orders(business_id,date,time,delivered_to,sender_id,whatsapp_message_id,whatsapp_from,total_items) VALUES(?,?,?,?,?,?,?,?)',[o.businessId,o.date,o.time,o.deliveredTo,o.senderId,o.whatsappMessageId,o.whatsappFrom,totalRequested]);
+    const r=await run('INSERT INTO orders(business_id,date,time,delivered_to,sender_id,whatsapp_message_id,whatsapp_from,total_items,source_type) VALUES(?,?,?,?,?,?,?,?,?)',[o.businessId,o.date,o.time,o.deliveredTo,o.senderId,o.whatsappMessageId,o.whatsappFrom,totalRequested,String(o.sourceType||'WHATSAPP').toUpperCase()==='MANUAL'?'MANUAL':'WHATSAPP']);
     let acceptedQty=0,rejectedQty=0;
     for(const row of resolved){
       const x=row.input,name=clean(x.item),q=row.quantity,p=row.result.product;
@@ -165,7 +166,7 @@ async function createOrder(o){
       const taxable=money(q*p.selling_price),tax=money(taxable*p.gst_rate/100);
       const oi=await run('INSERT INTO order_items(business_id,order_id,item_id,item_name,requested_quantity,accepted_quantity,status,unit,rate,hsn_code,gst_rate,taxable_value,total_tax,line_total) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',[o.businessId,r.lastID,p.id,p.name,q,q,'ACCEPTED',p.unit,p.selling_price,p.hsn_code,p.gst_rate,taxable,tax,money(taxable+tax)]);
       await run('UPDATE items SET current_stock=current_stock-? WHERE business_id=? AND id=?',[q,o.businessId,p.id]);
-      await run('INSERT INTO stock_transactions(business_id,item_id,type,quantity,reason,order_id,order_item_id) VALUES(?,?,"OUT",?,?,?,?)',[o.businessId,p.id,q,'WhatsApp delivery to '+o.deliveredTo,r.lastID,oi.lastID]);
+      await run('INSERT INTO stock_transactions(business_id,item_id,type,quantity,reason,order_id,order_item_id) VALUES(?,?,"OUT",?,?,?,?)',[o.businessId,p.id,q,((String(o.sourceType||'WHATSAPP').toUpperCase()==='MANUAL'?'Manual order to ':'WhatsApp delivery to ')+o.deliveredTo),r.lastID,oi.lastID]);
       acceptedQty+=q;
     }
     const status=acceptedQty>0&&rejectedQty>0?'PARTIAL':acceptedQty>0?'SUCCESS':'REJECTED';
@@ -173,6 +174,15 @@ async function createOrder(o){
     await run('INSERT OR IGNORE INTO processed_messages(business_id,message_id,whatsapp_from,sender_phone,body) VALUES(?,?,?,?,?)',[o.businessId,o.whatsappMessageId,o.whatsappFrom,o.senderPhone,o.body]);
     await run('COMMIT');return order(o.businessId,r.lastID);
   }catch(e){await run('ROLLBACK').catch(()=>{});throw e}
+}
+async function createManualOrder(b,d){
+  const items=Array.isArray(d.items)?d.items:[];
+  if(!clean(d.deliveredTo))throw Error('Customer / delivered-to name required');
+  if(!items.length)throw Error('Add at least one product');
+  const normalized=items.map(x=>({item:clean(x.item||x.name),quantity:Number(x.quantity)}));
+  if(normalized.some(x=>!x.item||!(x.quantity>0)))throw Error('Every manual order line needs a product and quantity');
+  const now=new Date(),date=clean(d.date)||now.toISOString().slice(0,10),time=clean(d.time)||now.toTimeString().slice(0,5);
+  return createOrder({businessId:b,date,time,deliveredTo:clean(d.deliveredTo),senderId:null,whatsappMessageId:'MANUAL-'+Date.now()+'-'+crypto.randomBytes(6).toString('hex'),whatsappFrom:'',senderPhone:'',body:'',items:normalized,sourceType:'MANUAL'});
 }
 async function savePendingOrderConfirmation(b,d){
   await run('DELETE FROM pending_order_confirmations WHERE business_id=? AND sender_phone=?',[b,clean(d.senderPhone)]);
@@ -227,13 +237,13 @@ async function invoice(b,id){const i=await get('SELECT i.*,c.name customer_name,
 async function createInvoice(b,d){
   await run('BEGIN IMMEDIATE');
   try{
-    if(!Array.isArray(d.items)||!d.items.length)throw Error('Add at least one product');
+    const orderIds=[...new Set((Array.isArray(d.order_ids)?d.order_ids:[]).map(Number).filter(x=>x>0))];
+    if(orderIds.length<2)throw Error('Invoices are only for merging two or more existing orders');
     const biz=await business(b),cust=await get('SELECT * FROM customers WHERE business_id=? AND id=?',[b,d.customer_id]);
     if(!cust)throw Error('Customer not found');
-    const orderIds=[...new Set((Array.isArray(d.order_ids)?d.order_ids:[]).map(Number).filter(x=>x>0))];
-    const source=orderIds.length?'ORDERS':'MANUAL';
+    const source='ORDERS';
     let orderRows=[];
-    if(orderIds.length){
+    {
       for(const oid of orderIds){
         const o=await get('SELECT * FROM orders WHERE business_id=? AND id=?',[b,oid]);
         if(!o)throw Error('Order #'+oid+' not found');
@@ -267,6 +277,17 @@ async function createInvoice(b,d){
     for(const oid of orderIds)await run('INSERT INTO invoice_orders(business_id,invoice_id,order_id) VALUES(?,?,?)',[b,r.lastID,oid]);
     const created=await invoice(b,r.lastID);await run('COMMIT');return created;
   }catch(e){await run('ROLLBACK').catch(()=>{});throw e}
+}
+async function ordersForCustomer(b,customerId){
+  const c=await get('SELECT * FROM customers WHERE business_id=? AND id=?',[b,customerId]); if(!c)return [];
+  const rows=await all('SELECT o.*,i.invoice_no linked_invoice_no FROM orders o LEFT JOIN invoice_orders io ON io.business_id=o.business_id AND io.order_id=o.id LEFT JOIN invoices i ON i.business_id=io.business_id AND i.id=io.invoice_id AND i.status<>"CANCELLED" WHERE o.business_id=? AND lower(trim(o.delivered_to))=lower(trim(?)) ORDER BY o.id DESC',[b,c.name]);
+  for(const o of rows){
+    const oi=await all('SELECT oi.*,COALESCE((SELECT SUM(ri.quantity) FROM order_return_items ri JOIN order_returns rr ON rr.id=ri.return_id WHERE ri.business_id=? AND rr.order_id=? AND ri.order_item_id=oi.id),0) returned_quantity FROM order_items oi WHERE oi.business_id=? AND oi.order_id=?',[b,o.id,b,o.id]);
+    o.billable_qty=oi.reduce((s,x)=>s+Math.max(0,Number(x.accepted_quantity||0)-Number(x.returned_quantity||0)),0);
+    o.item_names=oi.filter(x=>Number(x.accepted_quantity||0)-Number(x.returned_quantity||0)>0).map(x=>x.item_name).join(', ');
+    o.already_billed=!!o.linked_invoice_no && o.status!=='CANCELLED';
+  }
+  return rows;
 }
 async function billableOrdersForCustomer(b,customerId){
   const c=await get('SELECT * FROM customers WHERE business_id=? AND id=?',[b,customerId]);if(!c)return [];
@@ -333,4 +354,4 @@ async function confirmPurchase(b,id,rows){
 async function dashboard(b){const one=async(s)=>Number((await get(s,[b]))?.c||0);return {orders:await one('SELECT COUNT(*) c FROM orders WHERE business_id=?'),products:await one('SELECT COUNT(*) c FROM items WHERE business_id=?'),lowStock:await one('SELECT COUNT(*) c FROM items WHERE business_id=? AND current_stock<=minimum_stock'),todayOrders:await one('SELECT COUNT(*) c FROM orders WHERE business_id=? AND date=date("now","localtime")'),pending:await one('SELECT COUNT(*) c FROM orders WHERE business_id=? AND status="PENDING"'),invoices:await one('SELECT COUNT(*) c FROM invoices WHERE business_id=?'),purchases:await one('SELECT COUNT(*) c FROM purchase_bills WHERE business_id=?'),stockValue:money((await get('SELECT COALESCE(SUM(current_stock*purchase_price),0) v FROM items WHERE business_id=?',[b]))?.v)}}
 async function waStatus(b){return get('SELECT * FROM whatsapp_sessions WHERE business_id=?',[b])} async function setWa(b,s,m,q){return run('INSERT INTO whatsapp_sessions(business_id,status,message,qr,updated_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(business_id) DO UPDATE SET status=excluded.status,message=excluded.message,qr=excluded.qr,updated_at=CURRENT_TIMESTAMP',[b,s,m||'',q||null])}
 async function audit(b,u,a,e,id,d){return run('INSERT INTO audit_logs(business_id,user_id,action,entity,entity_id,details) VALUES(?,?,?,?,?,?)',[b,u,a,e,id,d||''])}
-module.exports={get,all,run,ready,register,login,session,logout,business,updateBusiness,items,addItem,editItem,stockIn,deleteItem,transactions,senders,addSender,editSender,delSender,sender,lid,saveLid,createOrder,orders,order,claimConfirmation,confirmationSent,confirmationPending,claimProcessedMessage,savePendingOrderConfirmation,getPendingOrderConfirmation,clearPendingOrderConfirmation,returnsForOrder,createOrderReturn,customers,addCustomer,findCustomerByName,invoices,invoice,createInvoice,billableOrdersForCustomer,finalizeInvoice,cancelInvoice,purchaseBills,createPurchase,purchase,addPurchaseItem,confirmPurchase,makeSku,dashboard,waStatus,setWa,audit,normalizePhone,hsnMaster,addHsn,updateHsn,deleteHsn,aliases,addAlias,deleteAlias,normalizeProductText};
+module.exports={get,all,run,ready,register,login,session,logout,business,updateBusiness,items,addItem,editItem,stockIn,deleteItem,transactions,senders,addSender,editSender,delSender,sender,lid,saveLid,createOrder,createManualOrder,orders,order,claimConfirmation,confirmationSent,confirmationPending,claimProcessedMessage,savePendingOrderConfirmation,getPendingOrderConfirmation,clearPendingOrderConfirmation,returnsForOrder,createOrderReturn,customers,addCustomer,findCustomerByName,invoices,invoice,createInvoice,ordersForCustomer,billableOrdersForCustomer,finalizeInvoice,cancelInvoice,purchaseBills,createPurchase,purchase,addPurchaseItem,confirmPurchase,makeSku,dashboard,waStatus,setWa,audit,normalizePhone,hsnMaster,addHsn,updateHsn,deleteHsn,aliases,addAlias,deleteAlias,normalizeProductText};
