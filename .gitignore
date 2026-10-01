@@ -6,3 +6,7 @@ data/*.db-wal
 data/ocr/
 .wwebjs_auth/
 .DS_Store
+
+.wwebjs_auth_backup/
+.wwebjs_cache_backup/
+workspace_contents/
