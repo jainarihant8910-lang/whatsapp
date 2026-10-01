@@ -145,6 +145,25 @@ function parse(body) {
   return items.length ? { deliveredTo: lines[0], items } : null;
 }
 
+function parseStockIn(body) {
+  const lines = String(body || '')
+    .replace(/^\uFEFF/,'')
+    .split(/\r?\n/)
+    .map(x => x.trim())
+    .filter(Boolean);
+  if (!lines.length) return null;
+  const command = lines[0].toLowerCase().replace(/\s+/g,' ');
+  if (!['add stock','stock in','stock add'].includes(command)) return null;
+  const items = [];
+  for (const line of lines.slice(1)) {
+    const m = line.match(/^(\d+(?:\.\d+)?)\s+(.+)$/);
+    if (!m) return {error:'Invalid stock line: ' + line};
+    items.push({quantity:Number(m[1]), item:m[2].trim()});
+  }
+  if (!items.length) return {error:'Add at least one line in the format: quantity product name'};
+  return {items};
+}
+
 async function phone(message, client, businessId) {
   const raw = message?.rawData || message?._data || {};
   const key = raw?.key || raw?.messageKey || {};
@@ -513,6 +532,105 @@ async function startBusiness(businessId, force = false) {
         } catch (e) {
           await db.setWa(businessId, 'CONNECTED', 'Stock enquiry reply failed: ' + e.message, null).catch(() => {});
           console.error('WhatsApp stock reply failed:', e.message);
+        } finally {
+          inFlightStockMessageIds.delete(incomingKey);
+        }
+        return;
+      }
+
+
+      // Stock-in commands MUST be handled before pending-order confirmation.
+      // Otherwise "ADD STOCK" / "STOCK IN" can be mistaken for the reply to
+      // an earlier insufficient-stock delivery.
+      const stockInParsed = parseStockIn(body);
+      if (stockInParsed) {
+        if (inFlightStockMessageIds.has(incomingKey)) return;
+        inFlightStockMessageIds.add(incomingKey);
+        try {
+          if (stockInParsed.error) {
+            await client.sendMessage(from, '❌ *STOCK NOT ADDED*\\n\\n' + stockInParsed.error + '\\n\\nUse:\\n*ADD STOCK*\\n250 Lakme Lotus Red\\n5 Taparia Universal Tool Kit', {
+              ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
+              ignoreQuoteErrors: true,
+              waitUntilMsgSent: true
+            });
+            return;
+          }
+
+          const senderPhone = await phone(message, client, businessId);
+          if (!senderPhone) {
+            await client.sendMessage(from, '❌ *STOCK NOT ADDED*\\n\\nCould not identify the sender phone number. Check the sender mapping in DeliveryOS.', {
+              ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
+              ignoreQuoteErrors: true,
+              waitUntilMsgSent: true
+            });
+            return;
+          }
+
+          const allowed = await db.sender(businessId, senderPhone);
+          if (!allowed) {
+            await client.sendMessage(from, '❌ *STOCK NOT ADDED*\\n\\nThis WhatsApp number is not approved in DeliveryOS Senders.', {
+              ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
+              ignoreQuoteErrors: true,
+              waitUntilMsgSent: true
+            });
+            return;
+          }
+
+          if (whatsappMessageId) {
+            const claimed = await db.claimProcessedMessage(businessId, whatsappMessageId, from, senderPhone, body);
+            if (!claimed) return;
+          }
+
+          let added;
+          try {
+            added = await db.addStockFromWhatsApp(businessId, stockInParsed.items, 'Stock added via WhatsApp by ' + (allowed.name || senderPhone));
+          } catch (e) {
+            if (e?.code === 'AMBIGUOUS_PRODUCT') {
+              const choices = (e.candidates || []).map((x,i) =>
+                (i + 1) + '. ' + x.name + (x.sku ? ' [' + x.sku + ']' : '')
+              ).join('\\n');
+              await client.sendMessage(from,
+                '⚠️ *STOCK NOT ADDED*\\n\\n' +
+                'I found more than one product matching *' + e.input + '*:\\n' + choices +
+                '\\n\\nReply with the exact product name or SKU.\\n_No stock was changed._',
+                {
+                  ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
+                  ignoreQuoteErrors: true,
+                  waitUntilMsgSent: true
+                }
+              );
+              return;
+            }
+            throw e;
+          }
+
+          const reply =
+            '📥 *STOCK ADDED SUCCESSFULLY*\\n\\n' +
+            added.map(x =>
+              '• *' + x.name + '* — +' + Number(x.quantity) + ' ' + (x.unit || 'PCS') +
+              ' → *' + Number(x.current_stock || 0) + ' ' + (x.unit || 'PCS') + ' available*'
+            ).join('\\n') +
+            '\\n\\n_Stock transaction recorded in DeliveryOS._';
+
+          const sent = await client.sendMessage(from, reply, {
+            ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
+            ignoreQuoteErrors: true,
+            waitUntilMsgSent: true
+          });
+          if (!sent) throw new Error('WhatsApp returned no sent message');
+          await db.setWa(businessId, 'CONNECTED', 'Stock added via WhatsApp by ' + senderPhone, null).catch(() => {});
+          console.log('WhatsApp stock-in processed:', added.map(x => x.name + ' +' + x.quantity).join(', '));
+        } catch (e) {
+          console.error('WhatsApp stock-in failed:', e.message);
+          try {
+            await client.sendMessage(from, '❌ *STOCK NOT ADDED*\\n\\n' + e.message + '\\n_No stock was changed._', {
+              ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
+              ignoreQuoteErrors: true,
+              waitUntilMsgSent: true
+            });
+          } catch (sendError) {
+            console.error('Stock-in error reply failed:', sendError.message);
+          }
         } finally {
           inFlightStockMessageIds.delete(incomingKey);
         }
