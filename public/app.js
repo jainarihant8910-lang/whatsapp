@@ -41,7 +41,10 @@ async function openProduct(prefill={}){
  $('productForm').onsubmit=async e=>{e.preventDefault();try{const d=Object.fromEntries(new FormData(e.target));await api('/api/items',{method:'POST',body:d});$('modal').classList.add('hidden');toast('Product saved');productsPage()}catch(x){toast(x.message,true)}}
 }
 async function searchProductClassification(){
- const q=String($('productName')?.value||'').trim();
+ const draftForm=$('productForm');
+ const draft=draftForm?Object.fromEntries(new FormData(draftForm)):{};
+ const q=String(draft.name||$('productName')?.value||'').trim();
+ window.pendingProductDraft={...draft,name:q};
  window.pendingProductName=q;
  if(q.length<2){toast('Enter at least 2 characters of the product name.',true);return}
  try{
@@ -52,11 +55,14 @@ async function searchProductClassification(){
   modal('Select product classification',`<p class='muted'>Choose the closest match. HSN/GST classification should be verified for the actual product before invoicing.</p><div class='tablewrap'><table><thead><tr><th>HSN</th><th>Group</th><th>Description</th><th>GST</th><th></th></tr></thead><tbody>${rows.map((x,i)=>`<tr><td><b>${esc(x.hsn_code)}</b></td><td>${esc(x.category||'—')}</td><td>${esc(x.description)}</td><td>${n(x.gst_rate)}%</td><td><button type='button' onclick='applyClassification(${JSON.stringify(x).replace(/</g,'&lt;')})'>Use</button></td></tr>`).join('')}</tbody></table></div>`);
  }catch(e){toast(e.message,true)}
 }
-function applyClassification(x){
- const name=String(window.pendingProductName||'').trim();
- const sku=String($('productSku')?.value||'').trim()||makeLocalSku(name,x.hsn_code);
+async function applyClassification(x){
+ const draft=window.pendingProductDraft||{};
+ const name=String(draft.name||window.pendingProductName||'').trim();
+ const sku=String(draft.sku||'').trim()||makeLocalSku(name,x.hsn_code);
+ const prefill={...draft,name,category:x.category||draft.category||x.description||'',sku,hsn_code:x.hsn_code,gst_rate:x.gst_rate??draft.gst_rate??0};
  $('modal').classList.add('hidden');
- openProduct({name,category:x.category||x.description||'',sku,hsn_code:x.hsn_code,gst_rate:x.gst_rate||0});
+ await openProduct(prefill);
+ const hs=$('productHsn');if(hs)hs.value=String(x.hsn_code||'');
  toast('HSN, GST, group and SKU filled from classification');
 }
 function makeLocalSku(name,hsn){const words=String(name).toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim().split(/\\s+/).filter(Boolean);const prefix=words.slice(0,3).map(x=>x.slice(0,3)).join('');return (prefix||'PRD')+'-'+String(hsn||'').replace(/\\D/g,'').slice(-4)+'-'+Date.now().toString().slice(-4)}
