@@ -241,17 +241,30 @@ function parseBill(text){
       ? [...tail.slice(0,firstPercentIndex).matchAll(/\d[\d,]*(?:\.\d+)?/g)].map(m=>num(m[0]))
       : nums.slice(0,-1);
     let taxable=0,rate=0,taxAmount=0;
-    if(beforeGst.length>=2){
+    let gstRate=percentages.length?percentages[percentages.length-1]:0;
+    // Prefer a column interpretation that satisfies invoice arithmetic:
+    // qty * rate = taxable and taxable * GST% = tax.
+    for(let i=0;i<nums.length-1;i++){
+      const r0=nums[i], t0=nums[i+1];
+      if(!(r0>0)||!(t0>0))continue;
+      if(Math.abs(q*r0-t0)<=Math.max(0.05,t0*0.003)){
+        rate=r0; taxable=t0;
+        if(i+3<nums.length && !gstRate && nums[i+2]>0 && nums[i+2]<=100)gstRate=nums[i+2];
+        if(i+3<nums.length)taxAmount=nums[i+3];
+        break;
+      }
+    }
+    if(!(rate>0)&&beforeGst.length>=2){
       rate=beforeGst[beforeGst.length-2];
       taxable=beforeGst[beforeGst.length-1];
-    }else if(beforeGst.length===1){
+    }else if(!(rate>0)&&beforeGst.length===1){
       taxable=beforeGst[0];
       rate=money(taxable/q);
     }
     if(!(rate>0)&&nums.length>=2)rate=nums[0];
     if(!(rate>0))return false;
-    if(total>taxable)taxAmount=money(total-taxable);
-    let gstRate=percentages.length?percentages[percentages.length-1]:0;
+    if(!(taxable>0))taxable=money(q*rate);
+    if(!(taxAmount>0)&&total>taxable)taxAmount=money(total-taxable);
     if(!(gstRate>0)&&taxAmount>0&&taxable>0)gstRate=money(taxAmount/taxable*100);
     const key=[name.toLowerCase(),q,rate,hsn].join('|');
     if(looseRowSeen.has(key))return false;
@@ -387,7 +400,7 @@ function parseBill(text){
 
   // Final safety pass: every OCR strategy above can create a candidate independently.
   // Remove footer/summary candidates here as the last line of defense.
-  const footerWords=/^(?:total|subtotal|grand total|bill amount|invoice amount|total amount|amount after tax|amount due|net amount|taxable amount|total tax|tax amount|cgst|sgst|igst|cess|round off|rounding|discount|balance due|paid amount|payment|amount in words|terms and conditions|bank details)\b/i;
+  const summaryTaxTotal=money(cgst+sgst+igst);\n  const footerWords=/^(?:total|subtotal|grand total|bill amount|invoice amount|total amount|amount after tax|amount due|net amount|taxable amount|total tax|tax amount|cgst|sgst|igst|cess|round off|rounding|discount|balance due|paid amount|payment|amount in words|terms and conditions|bank details)\b/i;
   const closeMoney=(a,b)=>Number.isFinite(Number(a))&&Number.isFinite(Number(b))&&Math.abs(Number(a)-Number(b))<=0.05;
   for(let i=items.length-1;i>=0;i--){
     const item=items[i];
@@ -407,7 +420,6 @@ function parseBill(text){
   const itemTaxTotal=money(items.reduce((s,x)=>s+Number(x.tax_amount||0),0));
   const itemInvoiceTotal=money(items.reduce((s,x)=>s+Number(x.line_total||0),0));
   const finalTaxableTotal=taxableTotal||itemTaxableTotal;
-  const summaryTaxTotal=money(cgst+sgst+igst);
   const finalTaxTotal=taxTotal||summaryTaxTotal||itemTaxTotal||((invoiceTotal||itemInvoiceTotal)>finalTaxableTotal?money((invoiceTotal||itemInvoiceTotal)-finalTaxableTotal):0);
   const finalInvoiceTotal=invoiceTotal||itemInvoiceTotal;
   // If the bill gives GST only in the summary, carry that written GST rate
