@@ -1,6 +1,15 @@
 require('dotenv').config();
 const express=require('express'); const path=require('path'); const crypto=require('crypto'); const PDFDocument=require('pdfkit'); const db=require('./platform-db');
 const app=express(); const PORT=Number(process.env.PORT)||3000; const PUBLIC=path.join(__dirname,'public');
+const loginAttempts=new Map();
+app.disable('x-powered-by');
+app.use((req,res,next)=>{
+  res.setHeader('X-Content-Type-Options','nosniff');
+  res.setHeader('X-Frame-Options','DENY');
+  res.setHeader('Referrer-Policy','same-origin');
+  if(req.path.startsWith('/api'))res.setHeader('Cache-Control','no-store');
+  next();
+});
 app.use(express.json({limit:'3mb'})); app.use(express.urlencoded({extended:true})); app.use(express.static(PUBLIC));
 function cookieToken(req){const m=String(req.headers.cookie||'').match(/(?:^|;)\s*dm_token=([^;]+)/);return m?decodeURIComponent(m[1]):''}
 async function auth(req,res,next){try{const s=await db.session(cookieToken(req));if(!s)return res.status(401).json({error:'Login required'});req.session=s;req.businessId=s.business_id;req.userId=s.user_id;next()}catch(e){res.status(500).json({error:e.message})}}
@@ -113,14 +122,30 @@ function pdfInvoice(res,title,biz,inv){
 }
 app.get('/api/health',async(r,s)=>{try{await db.ready; s.json({ok:true})}catch(e){s.status(500).json({ok:false,error:e.message})}});
 app.post('/api/auth/register',async(r,s)=>{try{await db.ready;s.status(201).json({success:true,business:await db.register(r.body.firm_id,r.body.name,r.body.password)})}catch(e){s.status(400).json({error:e.message})}});
-app.post('/api/auth/login',async(r,s)=>{try{await db.ready;const x=await db.login(r.body.firm_id,r.body.password);if(!x)return s.status(401).json({error:'Invalid Firm ID or password'});s.cookieToken=x.token;s.setHeader('Set-Cookie','dm_token='+encodeURIComponent(x.token)+'; HttpOnly; Path=/; SameSite=Lax'+(process.env.NODE_ENV==='production'?'; Secure':''));try{require('./index').startBusiness(x.business.id).catch(e=>console.error('WhatsApp lazy startup:',e.message))}catch(e){console.error('WhatsApp worker load:',e.message)}s.json({success:true,csrf:x.csrf,business:x.business,user:x.user})}catch(e){s.status(500).json({error:e.message})}});
+app.post('/api/auth/login',async(r,s)=>{
+  const key=String(r.ip||r.socket?.remoteAddress||'unknown');
+  const now=Date.now(),windowMs=15*60*1000,max=20;
+  const a=loginAttempts.get(key)||{count:0,reset:now+windowMs};
+  if(now>a.reset){a.count=0;a.reset=now+windowMs}
+  a.count++;loginAttempts.set(key,a);
+  if(a.count>max)return s.status(429).json({error:'Too many login attempts. Try again later.'});
+  try{
+    await db.ready;const x=await db.login(r.body.firm_id,r.body.password);
+    if(!x)return s.status(401).json({error:'Invalid Firm ID or password'});
+    loginAttempts.delete(key);
+    s.cookieToken=x.token;
+    s.setHeader('Set-Cookie','dm_token='+encodeURIComponent(x.token)+'; HttpOnly; Path=/; SameSite=Lax'+(process.env.NODE_ENV==='production'?'; Secure':''));
+    try{require('./index').startBusiness(x.business.id).catch(e=>console.error('WhatsApp lazy startup:',e.message))}catch(e){console.error('WhatsApp worker load:',e.message)}
+    s.json({success:true,csrf:x.csrf,business:x.business,user:x.user});
+  }catch(e){s.status(500).json({error:e.message})}
+});
 app.post('/api/auth/logout',auth,csrf,async(r,s)=>{await db.logout(cookieToken(r));s.setHeader('Set-Cookie','dm_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax');s.json({success:true})});
 app.get('/api/auth/me',auth,async(r,s)=>{try{require('./index').startBusiness(r.businessId).catch(e=>console.error('WhatsApp lazy startup:',e.message))}catch(e){console.error('WhatsApp worker load:',e.message)}s.json({business:await db.business(r.businessId),user:{id:r.userId}})});
 app.use('/api',auth); app.use('/api',csrf);
 app.get('/api/dashboard',async(r,s)=>s.json(await db.dashboard(r.businessId)));
 app.get('/api/items',async(r,s)=>s.json({items:await db.items(r.businessId)}));
 app.get('/api/hsn',async(r,s)=>s.json({hsn:await db.hsnMaster(r.businessId)}));
-app.get('/api/hsn/search',async(r,s)=>{try{const q=String(r.query.q||'').trim();if(q.length<2)return s.status(400).json({error:'Enter at least 2 characters'});const base=process.env.HSN_LOOKUP_API_URL||'https://hsn.krakelabsindia.com/api/lookup';const u=new URL(base);u.searchParams.set('q',q);u.searchParams.set('limit','8');const resp=await fetch(u);if(!resp.ok)throw Error('HSN lookup service returned '+resp.status);const data=await resp.json();const results=(data.results||data.matches||[]).map(x=>({hsn_code:String(x.hsn_sac||x.hsn_code||x.code||''),description:x.description||'',category:x.chapter||x.category||'',gst_rate:parseFloat(String(x.gst_rate||x.gst||'').replace('%',''))||0,confidence:x.confidence??null})).filter(x=>x.hsn_code);s.json({results,source:'external HSN/GST lookup'});}catch(e){s.status(502).json({error:'HSN lookup failed: '+e.message})}});
+app.get('/api/hsn/search',async(r,s)=>{try{const q=String(r.query.q||'').trim();if(q.length<2)return s.status(400).json({error:'Enter at least 2 characters'});const base=process.env.HSN_LOOKUP_API_URL||'https://hsn.krakelabsindia.com/api/lookup';const u=new URL(base);u.searchParams.set('q',q);u.searchParams.set('limit','8');const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),7000);let resp;try{resp=await fetch(u,{signal:ac.signal})}finally{clearTimeout(timer)}if(!resp.ok)throw Error('HSN lookup service returned '+resp.status);const data=await resp.json();const results=(data.results||data.matches||[]).map(x=>({hsn_code:String(x.hsn_sac||x.hsn_code||x.code||''),description:x.description||'',category:x.chapter||x.category||'',gst_rate:parseFloat(String(x.gst_rate||x.gst||'').replace('%',''))||0,confidence:x.confidence??null})).filter(x=>x.hsn_code);s.json({results,source:'external HSN/GST lookup'});}catch(e){s.status(502).json({error:'HSN lookup failed: '+(e.name==='AbortError'?'lookup timed out':e.message)})}});
 app.post('/api/hsn',async(r,s)=>{try{s.status(201).json({hsn:await db.addHsn(r.businessId,r.body)})}catch(e){s.status(400).json({error:e.message})}});
 app.put('/api/hsn/:id',async(r,s)=>{try{s.json({hsn:await db.updateHsn(r.businessId,Number(r.params.id),r.body)})}catch(e){s.status(400).json({error:e.message})}});
 app.delete('/api/hsn/:id',async(r,s)=>{try{s.json(await db.deleteHsn(r.businessId,Number(r.params.id)))}catch(e){s.status(400).json({error:e.message})}});
