@@ -195,7 +195,7 @@ function moneyRs(x){return '₹'+n(x)}
 function pct(x){return n(x)+'%'}
 function analyticsBarRows(rows,maxValue){
   return rows.length?rows.map(x=>{
-    const width=maxValue?Math.max(3,Math.min(100,Number(x.profit||0)/maxValue*100)):3;
+    const width=maxValue&&x.profit!==null?Math.max(3,Math.min(100,Number(x.profit||0)/maxValue*100)):3;
     return `<div class='analytics-bar-row'><div class='analytics-bar-label'><span>${esc(x.name)}</span><b>${moneyRs(x.profit)}</b></div><div class='analytics-track'><div class='analytics-fill' style='width:${width}%'></div></div><small>${moneyRs(x.sales)} sales · ${n(x.units)} units · ${pct(x.margin)} margin</small></div>`;
   }).join(''):'<div class="empty">No sales found for these filters.</div>';
 }
@@ -220,7 +220,7 @@ async function loadAnalytics(){
     const d=await api('/api/analytics/sales?'+q.toString()),s=d.summary||{};
     const max=Math.max(1,...(d.products||[]).map(x=>Math.max(0,Number(x.profit||0))));
     const dailyMax=Math.max(1,...(d.daily||[]).map(x=>Number(x.sales||0)));
-    $('analyticsBody').innerHTML=`<div class='grid stats analytics-stats'>${card('Net sales',moneyRs(s.sales),'After returns')}${card('Purchase value',moneyRs(s.purchase_value??s.cogs),'Cost of goods sold')}${card('Gross profit',moneyRs(s.profit),pct(s.margin)+' margin')}${card('Orders',n(s.orders),'Delivered orders')}${card('Units sold',n(s.units),'Net quantity')}${card('Returned units',n(s.returned),'Returned quantity')}</div>
+    $('analyticsBody').innerHTML=`<div class='grid stats analytics-stats'>${card('Net sales',moneyRs(s.sales),'After returns')}${card('Purchase value',moneyRs(s.purchase_value??s.cogs),'Cost of goods sold')}${card('Gross profit',s.cost_complete===false?'Cost missing':moneyRs(s.profit),s.cost_complete===false?('Missing cost for '+n(s.missing_cost_units)+' units'):pct(s.margin)+' margin')}${card('Orders',n(s.orders),'Delivered orders')}${card('Units sold',n(s.units),'Net quantity')}${card('Returned units',n(s.returned),'Returned quantity')}</div>
     <div class='grid two analytics-grid'><section class='panel'><div class='bar'><h3>Daily sales trend</h3><span class='muted'>${esc(from)} → ${esc(to)}</span></div>${(d.daily||[]).length?(d.daily||[]).map(x=>`<div class='analytics-bar-row'><div class='analytics-bar-label'><span>${esc(x.name)}</span><b>${moneyRs(x.sales)}</b></div><div class='analytics-track'><div class='analytics-fill' style='width:${Math.max(3,Number(x.sales||0)/dailyMax*100)}%'></div></div><small>Profit ${moneyRs(x.profit)} · ${pct(x.margin)}</small></div>`).join(''):'<div class="empty">No sales found.</div>'}</section>
     <section class='panel'><div class='bar'><h3>Profit by product</h3><span class='muted'>Top 20</span></div>${analyticsBarRows(d.products||[],max)}</section></div>
     <section class='panel'><div class='bar'><h3>Customer profitability</h3><span class='muted'>Net sales and gross profit</span></div><div class='tablewrap'><table><thead><tr><th>Customer</th><th>Orders</th><th>Units</th><th>Sales</th><th>Purchase value</th><th>Gross profit</th><th>Margin</th></tr></thead><tbody>${(d.customers||[]).map(x=>`<tr><td><b>${esc(x.name)}</b></td><td>${n(x.orders)}</td><td>${n(x.units)}</td><td>${moneyRs(x.sales)}</td><td>${moneyRs(x.purchase_value??x.cogs)}</td><td><b>${moneyRs(x.profit)}</b></td><td>${pct(x.margin)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">No customer sales found.</td></tr>'}</tbody></table></div></section>`;
