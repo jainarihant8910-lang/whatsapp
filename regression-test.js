@@ -27,6 +27,7 @@ const checks=[
  [index.includes('The pending order was not confirmed'),'Non-confirmation rejection message is missing'],
  [index.includes('function parseStockIn(body)'), 'WhatsApp stock-in parser is missing'],
  [index.includes('Stock-in commands MUST be handled before pending-order confirmation'), 'Stock-in handler is not before pending confirmation'],
+ [(()=>{const a=index.indexOf('      // Stock-in commands MUST be handled before pending-order confirmation.');const z=index.indexOf('      // If a previous order is waiting for an insufficient-stock confirmation,',a);const b=a>=0&&z>a?index.slice(a,z):'';return b.includes("await client.sendMessage(from, reply") && !b.includes("if (!sent) throw new Error('WhatsApp returned no sent message')")})(),'Stock-in success reply must not treat an empty send result as a failed stock transaction'],
  [db.includes('async function addStockFromWhatsApp'), 'Atomic WhatsApp stock-in transaction is missing'],
  [db.includes('Stock added via WhatsApp'), 'WhatsApp stock-in transaction reason is missing']
 ];
