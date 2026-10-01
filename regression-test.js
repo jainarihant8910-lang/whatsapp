@@ -24,7 +24,11 @@ const checks=[
  [db.includes('allowPartialStock'),'Confirmed shortage partial-fulfillment path is missing'],
  [index.includes('Reply *OKAY*'),'WhatsApp stock confirmation prompt is missing'],
  [index.includes('getPendingOrderConfirmation'),'Pending order confirmation handling is missing'],
- [index.includes('The pending order was not confirmed'),'Non-confirmation rejection message is missing']
+ [index.includes('The pending order was not confirmed'),'Non-confirmation rejection message is missing'],
+ [index.includes('function parseStockIn(body)'), 'WhatsApp stock-in parser is missing'],
+ [index.includes('Stock-in commands MUST be handled before pending-order confirmation'), 'Stock-in handler is not before pending confirmation'],
+ [db.includes('async function addStockFromWhatsApp'), 'Atomic WhatsApp stock-in transaction is missing'],
+ [db.includes('Stock added via WhatsApp'), 'WhatsApp stock-in transaction reason is missing']
 ];
 for(const [ok,msg] of checks)if(!ok)throw new Error(msg);
 console.log('Regression checks passed.');
