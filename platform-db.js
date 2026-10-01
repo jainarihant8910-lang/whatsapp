@@ -420,12 +420,12 @@ async function salesAnalytics(b,f={}){
     FROM orders o JOIN order_items oi ON oi.business_id=o.business_id AND oi.order_id=o.id
     LEFT JOIN items i ON i.business_id=oi.business_id AND i.id=oi.item_id WHERE ${w}`;
   const rows=await all(base,params);
-  const cleanRows=rows.map(x=>{const qty=Math.max(0,Number(x.accepted_quantity||0)-Number(x.returned_qty||0));const rate=Number(x.rate||0),cost=Number(x.cost_price||0)||Number(x.current_cost||0);const sales=money(qty*rate),cogs=money(qty*cost);return {...x,net_qty:qty,sales,cogs,profit:money(sales-cogs)}}).filter(x=>x.net_qty>0);
-  const sum=cleanRows.reduce((a,x)=>{a.sales+=x.sales;a.cogs+=x.cogs;a.profit+=x.profit;a.units+=x.net_qty;return a},{sales:0,cogs:0,profit:0,units:0});
+  const cleanRows=rows.map(x=>{const qty=Math.max(0,Number(x.accepted_quantity||0)-Number(x.returned_qty||0));const rate=Number(x.rate||0),purchaseValue=Number(x.cost_price||0)||Number(x.current_cost||0);const sales=money(qty*rate),cogs=money(qty*purchaseValue);return {...x,net_qty:qty,sales,purchase_value:cogs,cogs,profit:money(sales-cogs)}}).filter(x=>x.net_qty>0);
+  const sum=cleanRows.reduce((a,x)=>{a.sales+=x.sales;a.purchase_value+=x.purchase_value;a.cogs+=x.purchase_value;a.profit+=x.profit;a.units+=x.net_qty;return a},{sales:0,purchase_value:0,cogs:0,profit:0,units:0});
   const orderSet=new Set(cleanRows.map(x=>x.order_id));
   const returned=rows.reduce((a,x)=>a+Number(x.returned_qty||0),0);
-  sum.sales=money(sum.sales);sum.cogs=money(sum.cogs);sum.profit=money(sum.profit);sum.margin=sum.sales?money(sum.profit/sum.sales*100):0;sum.orders=orderSet.size;sum.returned=returned;
-  const group=(key)=>{const m=new Map();for(const x of cleanRows){const k=String(x[key]??'').trim()||'Unknown';const v=m.get(k)||{name:k,sales:0,cogs:0,profit:0,units:0,orders:new Set()};v.sales+=x.sales;v.cogs+=x.cogs;v.profit+=x.profit;v.units+=x.net_qty;v.orders.add(x.order_id);m.set(k,v)}return [...m.values()].map(v=>({...v,sales:money(v.sales),cogs:money(v.cogs),profit:money(v.profit),margin:v.sales?money(v.profit/v.sales*100):0,orders:v.orders.size})).sort((a,z)=>z.profit-a.profit)};
+  sum.sales=money(sum.sales);sum.purchase_value=money(sum.purchase_value);sum.cogs=sum.purchase_value;sum.profit=money(sum.profit);sum.margin=sum.sales?money(sum.profit/sum.sales*100):0;sum.orders=orderSet.size;sum.returned=returned;
+  const group=(key)=>{const m=new Map();for(const x of cleanRows){const k=String(x[key]??'').trim()||'Unknown';const v=m.get(k)||{name:k,sales:0,purchase_value:0,cogs:0,profit:0,units:0,orders:new Set()};v.sales+=x.sales;v.purchase_value+=x.purchase_value;v.cogs+=x.purchase_value;v.profit+=x.profit;v.units+=x.net_qty;v.orders.add(x.order_id);m.set(k,v)}return [...m.values()].map(v=>({...v,sales:money(v.sales),purchase_value:money(v.purchase_value),cogs:money(v.purchase_value),profit:money(v.profit),margin:v.sales?money(v.profit/v.sales*100):0,orders:v.orders.size})).sort((a,z)=>z.profit-a.profit)};
   const daily=group('date').sort((a,z)=>String(a.name).localeCompare(String(z.name)));
   return {summary:sum,daily,products:group('item_name').slice(0,20),customers:group('delivered_to').slice(0,20)};
 }
