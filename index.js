@@ -677,9 +677,16 @@ async function startBusiness(businessId, force = false) {
                 console.error('Pending order confirmation failed:', e);
               }
             }
-          } else {
+          } else if (/^(no|nope|reject|cancel)$/i.test(body.trim())) {
             await db.clearPendingOrderConfirmation(businessId, pending.id);
             await client.sendMessage(from, '❌ *ORDER REJECTED*\\n\\nThe pending order was not confirmed, so no stock was changed.', {
+              ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
+              ignoreQuoteErrors: true,
+              waitUntilMsgSent: true
+            });
+          } else {
+            await db.clearPendingOrderConfirmation(businessId, pending.id);
+            await client.sendMessage(from, 'ℹ️ *PENDING ORDER*\\n\\nReply *OKAY* to accept the available stock, or *NO* to reject the order.', {
               ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
               ignoreQuoteErrors: true,
               waitUntilMsgSent: true
