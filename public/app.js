@@ -8,8 +8,8 @@ $('loginForm').onsubmit=async e=>{e.preventDefault();try{const d=await api('/api
 $('registerForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/auth/register',{method:'POST',body:{firm_id:$('regFirm').value,name:$('regName').value,password:$('regPass').value}});toast('Business created. Sign in now.');$('loginTab').click();$('loginFirm').value=$('regFirm').value}catch(x){$('authMsg').textContent=x.message}};
 $('logout').onclick=async()=>{try{await api('/api/auth/logout',{method:'POST'})}catch{}localStorage.removeItem('dm_csrf');showLogin()}; $('refresh').onclick=()=>load(); $('menu').onclick=()=>document.body.classList.toggle('open');
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page)); $('closeModal').onclick=()=>$('modal').classList.add('hidden');
-async function go(p){page=p;document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===p));$('title').textContent=p[0].toUpperCase()+p.slice(1);$('subtitle').textContent=p==='dashboard'?'Business overview':'Manage '+p;document.body.classList.remove('open');await load()}
-async function load(){try{if(page==='dashboard')return dashboard();if(page==='orders')return ordersPage();if(page==='products')return productsPage();if(page==='masters')return mastersPage();if(page==='customers')return customersPage();if(page==='senders')return sendersPage();if(page==='invoices')return invoicesPage();if(page==='transactions')return transactionsPage();if(page==='whatsapp')return whatsappPage();if(page==='settings')return settingsPage()}catch(e){toast(e.message,true)}}
+async function go(p){page=p;document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===p));$('title').textContent=p==='analytics'?'Sales & Profit':p[0].toUpperCase()+p.slice(1);$('subtitle').textContent=p==='dashboard'?'Business overview':p==='analytics'?'Revenue, cost and gross-profit analysis':'Manage '+p;document.body.classList.remove('open');await load()}
+async function load(){try{if(page==='dashboard')return dashboard();if(page==='analytics')return analyticsPage();if(page==='orders')return ordersPage();if(page==='products')return productsPage();if(page==='masters')return mastersPage();if(page==='customers')return customersPage();if(page==='senders')return sendersPage();if(page==='invoices')return invoicesPage();if(page==='transactions')return transactionsPage();if(page==='whatsapp')return whatsappPage();if(page==='settings')return settingsPage()}catch(e){toast(e.message,true)}}
 function card(title,value,sub){return `<div class='card'><small>${esc(title)}</small><strong>${esc(value)}</strong><span>${esc(sub||'')}</span></div>`}
 async function dashboard(){const d=await api('/api/dashboard');const p=await api('/api/items');items=p.items||[];$('page').innerHTML=`<div class='grid stats'>${card('Today orders',d.todayOrders,'WhatsApp + manual')}${card('All orders',d.orders,'Recorded deliveries')}${card('Products',d.products,'Inventory master')}${card('Low stock',d.lowStock,'Needs attention')}${card('Pending orders',d.pending,'Confirmation pending')}${card('Invoices',d.invoices,'Draft + finalized')}${card('Stock value','₹'+n(d.stockValue),'At purchase price')}</div><div class='grid two'><section class='panel'><h3>Quick actions</h3><div class='actions'><button class='primary' onclick="openProduct()">+ Product</button><button onclick="openCustomer()">+ Customer</button><button onclick="openMergeOrdersInvoice()">🔗 Merge orders</button></div></section><section class='panel'><h3>Low stock</h3>${items.filter(x=>x.low_stock).slice(0,8).map(x=>`<div class='row'><span>${esc(x.name)}</span><b>${n(x.current_stock)} / min ${n(x.minimum_stock)}</b></div>`).join('')||'<div class="muted">No low-stock products.</div>'}</section></div>`}
 let productSearch='', productFilter='ALL';
@@ -190,6 +190,42 @@ async function createMergedInvoice(e){e.preventDefault();const ids=[...document.
 function openInvoice(){toast('Invoices can only be created by merging existing orders.',true)}
 function addInvoiceRow(){const x=document.createElement('div');x.className='invrow';x.innerHTML=`<select>${items.map(p=>`<option value='${p.id}'>${esc(p.name)} — ₹${n(p.selling_price)}</option>`).join('')}</select><input type='number' min='0.01' step='0.01' value='1'><button type='button' onclick='this.parentElement.remove()'>×</button>`;$('invoiceRows').appendChild(x)}
 async function finalizeInv(id){if(!confirm('Finalize invoice?'))return;try{await api('/api/invoices/'+id+'/finalize',{method:'POST'});toast('Invoice finalized');invoicesPage()}catch(e){toast(e.message,true)}} async function cancelInv(id){if(!confirm('Cancel this invoice? A merged-order invoice does not change stock because the original orders already deducted stock.'))return;try{await api('/api/invoices/'+id+'/cancel',{method:'POST'});toast('Invoice cancelled');invoicesPage()}catch(e){toast(e.message,true)}}
+let analyticsFilters={from:'',to:'',product:'',customer:'',source:'ALL'};
+function moneyRs(x){return '₹'+n(x)}
+function pct(x){return n(x)+'%'}
+function analyticsBarRows(rows,maxValue){
+  return rows.length?rows.map(x=>{
+    const width=maxValue?Math.max(3,Math.min(100,Number(x.profit||0)/maxValue*100)):3;
+    return `<div class='analytics-bar-row'><div class='analytics-bar-label'><span>${esc(x.name)}</span><b>${moneyRs(x.profit)}</b></div><div class='analytics-track'><div class='analytics-fill' style='width:${width}%'></div></div><small>${moneyRs(x.sales)} sales · ${n(x.units)} units · ${pct(x.margin)} margin</small></div>`;
+  }).join(''):'<div class="empty">No sales found for these filters.</div>';
+}
+async function analyticsPage(){
+  const [pd,cd]=await Promise.all([api('/api/items'),api('/api/customers')]);
+  items=pd.items||[];customers=cd.customers||[];
+  const today=new Date(), prior=new Date(today);prior.setDate(today.getDate()-29);
+  const iso=x=>x.toISOString().slice(0,10);
+  if(!analyticsFilters.from)analyticsFilters.from=iso(prior);
+  if(!analyticsFilters.to)analyticsFilters.to=iso(today);
+  $('page').innerHTML=`<div class='bar'><div><h3>Sales & Profit Analysis</h3><p class='muted'>Gross profit = net delivered sales minus product cost. Returns reduce the sold quantity.</p></div><button onclick='loadAnalytics()'>↻ Refresh analysis</button></div>
+  <div class='panel analytics-filters'><label>From<input id='anFrom' type='date' value='${analyticsFilters.from}'></label><label>To<input id='anTo' type='date' value='${analyticsFilters.to}'></label><label>Product<select id='anProduct'><option value=''>All products</option>${items.map(x=>`<option value='${x.id}' ${String(analyticsFilters.product)===String(x.id)?'selected':''}>${esc(x.name)}</option>`).join('')}</select></label><label>Customer<select id='anCustomer'><option value=''>All customers</option>${customers.map(x=>`<option value="${esc(x.name)}" ${analyticsFilters.customer===x.name?'selected':''}>${esc(x.name)}</option>`).join('')}</select></label><label>Source<select id='anSource'><option value='ALL'>All sources</option><option value='WHATSAPP'>WhatsApp</option><option value='MANUAL'>Manual</option></select></label><button class='primary' onclick='loadAnalytics()'>Apply filters</button></div>
+  <div id='analyticsBody'><div class='empty'>Loading analysis…</div></div>`;
+  $('anSource').value=analyticsFilters.source;
+  await loadAnalytics();
+}
+async function loadAnalytics(){
+  const from=$('anFrom')?.value||analyticsFilters.from,to=$('anTo')?.value||analyticsFilters.to,product=$('anProduct')?.value||analyticsFilters.product,customer=$('anCustomer')?.value||analyticsFilters.customer,source=$('anSource')?.value||analyticsFilters.source;
+  analyticsFilters={from,to,product,customer,source};
+  const q=new URLSearchParams({from,to,product_id:product,customer,source});
+  try{
+    const d=await api('/api/analytics/sales?'+q.toString()),s=d.summary||{};
+    const max=Math.max(1,...(d.products||[]).map(x=>Math.max(0,Number(x.profit||0))));
+    const dailyMax=Math.max(1,...(d.daily||[]).map(x=>Number(x.sales||0)));
+    $('analyticsBody').innerHTML=`<div class='grid stats analytics-stats'>${card('Net sales',moneyRs(s.sales),'After returns')}${card('Cost of goods',moneyRs(s.cogs),'Purchase cost')}${card('Gross profit',moneyRs(s.profit),pct(s.margin)+' margin')}${card('Orders',n(s.orders),'Delivered orders')}${card('Units sold',n(s.units),'Net quantity')}${card('Returned units',n(s.returned),'Returned quantity')}</div>
+    <div class='grid two analytics-grid'><section class='panel'><div class='bar'><h3>Daily sales trend</h3><span class='muted'>${esc(from)} → ${esc(to)}</span></div>${(d.daily||[]).length?(d.daily||[]).map(x=>`<div class='analytics-bar-row'><div class='analytics-bar-label'><span>${esc(x.name)}</span><b>${moneyRs(x.sales)}</b></div><div class='analytics-track'><div class='analytics-fill' style='width:${Math.max(3,Number(x.sales||0)/dailyMax*100)}%'></div></div><small>Profit ${moneyRs(x.profit)} · ${pct(x.margin)}</small></div>`).join(''):'<div class="empty">No sales found.</div>'}</section>
+    <section class='panel'><div class='bar'><h3>Profit by product</h3><span class='muted'>Top 20</span></div>${analyticsBarRows(d.products||[],max)}</section></div>
+    <section class='panel'><div class='bar'><h3>Customer profitability</h3><span class='muted'>Net sales and gross profit</span></div><div class='tablewrap'><table><thead><tr><th>Customer</th><th>Orders</th><th>Units</th><th>Sales</th><th>Cost</th><th>Profit</th><th>Margin</th></tr></thead><tbody>${(d.customers||[]).map(x=>`<tr><td><b>${esc(x.name)}</b></td><td>${n(x.orders)}</td><td>${n(x.units)}</td><td>${moneyRs(x.sales)}</td><td>${moneyRs(x.cogs)}</td><td><b>${moneyRs(x.profit)}</b></td><td>${pct(x.margin)}</td></tr>`).join('')||'<tr><td colspan="7" class="muted">No customer sales found.</td></tr>'}</tbody></table></div></section>`;
+  }catch(e){$('analyticsBody').innerHTML='<div class="msg">'+esc(e.message)+'</div>'}
+}
 async function transactionsPage(){const d=await api('/api/transactions');$('page').innerHTML=`<div class='bar'><h3>Stock history</h3></div><div class='panel tablewrap'><table><thead><tr><th>Date</th><th>Product</th><th>Type</th><th>Qty</th><th>Reason</th></tr></thead><tbody>${(d.transactions||[]).map(x=>`<tr><td>${esc(x.created_at)}</td><td>${esc(x.item_name)}</td><td>${esc(x.type)}</td><td>${n(x.quantity)}</td><td>${esc(x.reason)}</td></tr>`).join('')}</tbody></table></div>`}
 async function whatsappPage(){
   if(waTimer)clearInterval(waTimer);
