@@ -7,6 +7,7 @@ const get=(s,p=[])=>new Promise((a,b)=>db.get(s,p,(e,r)=>e?b(e):a(r)));
 const all=(s,p=[])=>new Promise((a,b)=>db.all(s,p,(e,r)=>e?b(e):a(r||[])));
 const normalizePhone=v=>String(v||'').replace(/\D/g,'');
 const money=v=>Math.round((Number(v)||0)*100)/100;
+function financialYear(value){const d=new Date(value||Date.now());const y=d.getFullYear(),m=d.getMonth()+1;return m>=4?y+'-'+String(y+1).slice(-2):(y-1)+'-'+String(y).slice(-2)}
 const clean=v=>String(v??'').trim().slice(0,500);
 function hashPassword(p){const salt=crypto.randomBytes(16).toString('hex');const h=crypto.pbkdf2Sync(String(p),salt,210000,32,'sha256').toString('hex');return 'pbkdf2$210000$'+salt+'$'+h}
 function verifyPassword(p,s){try{const [a,it,salt,h]=String(s).split('$');if(a!=='pbkdf2')return false;const x=crypto.pbkdf2Sync(String(p),salt,Number(it),32,'sha256');return crypto.timingSafeEqual(x,Buffer.from(h,'hex'))}catch{return false}}
@@ -48,6 +49,7 @@ async function init(){
  await run('CREATE TABLE IF NOT EXISTS invoice_orders(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER NOT NULL,invoice_id INTEGER NOT NULL,order_id INTEGER NOT NULL,UNIQUE(business_id,invoice_id,order_id))');
  await run('CREATE TABLE IF NOT EXISTS invoice_items(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER NOT NULL,invoice_id INTEGER,item_id INTEGER,item_name TEXT,quantity REAL,unit TEXT,rate REAL,hsn_code TEXT,gst_rate REAL,taxable_value REAL,total_tax REAL,line_total REAL)');
  await run('CREATE TABLE IF NOT EXISTS audit_logs(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER,user_id INTEGER,action TEXT,entity TEXT,entity_id INTEGER,details TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+ await run('CREATE TABLE IF NOT EXISTS gst_rate_history(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER,hsn_code TEXT,product_name TEXT,old_rate REAL,new_rate REAL,effective_from TEXT,source TEXT DEFAULT "TEMPLATE",created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
  let b=await get('SELECT * FROM businesses ORDER BY id LIMIT 1');
  if(!b){const pw=process.env.DEFAULT_ADMIN_PASSWORD||'ChangeMe123!';const r=await run('INSERT INTO businesses(firm_id,name,password_hash) VALUES(?,?,?)',['DEFAULT','My Business',hashPassword(pw)]);b=await get('SELECT * FROM businesses WHERE id=?',[r.lastID]);await run('INSERT INTO users(business_id,username,role,password_hash) VALUES(?,?,?,?)',[b.id,'owner','OWNER',b.password_hash])}
  const bs=await all('SELECT id FROM businesses'); for(const x of bs)await run('INSERT OR IGNORE INTO whatsapp_sessions(business_id,status) VALUES(?,?)',[x.id,'DISCONNECTED']);
@@ -306,7 +308,7 @@ async function createInvoice(b,d){
       if(!orderRows.length)throw Error('Selected orders have no billable remaining quantities');
       d.items=orderRows.map(x=>({item_id:x.item_id,quantity:x.remaining_quantity,rate:x.rate,unit:x.unit,hsn_code:x.hsn_code,gst_rate:x.gst_rate,item_name:x.item_name}));
     }
-    const fy=new Date().getFullYear()+'-'+String(new Date().getFullYear()+1).slice(-2),cnt=await get('SELECT COUNT(*) c FROM invoices WHERE business_id=? AND financial_year=?',[b,fy]);const no=(biz.invoice_prefix||'INV')+'-'+String(Number(cnt.c)+1).padStart(4,'0');
+    const invoiceDate=d.invoice_date||new Date().toISOString().slice(0,10); const fy=financialYear(invoiceDate),cnt=await get('SELECT COUNT(*) c FROM invoices WHERE business_id=? AND financial_year=?',[b,fy]);const no=(biz.invoice_prefix||'INV')+'-'+String(Number(cnt.c)+1).padStart(4,'0');
     let sub=0,cgst=0,sgst=0,igst=0,rows=[];
     for(const x of d.items){
       const p=await get('SELECT * FROM items WHERE business_id=? AND id=?',[b,x.item_id]);
@@ -427,6 +429,48 @@ async function salesAnalytics(b,f={}){
   const daily=group('date').sort((a,z)=>String(a.name).localeCompare(String(z.name)));
   return {summary:sum,daily,products:group('item_name').slice(0,20),customers:group('delivered_to').slice(0,20)};
 }
+function parseGstUpdateText(text){
+ const lines=String(text||'').replace(/\\r/g,'').split('\\n').map(x=>x.trim()).filter(Boolean);
+ let effective='',rows=[],started=false;
+ for(const line of lines){
+   if(/^GST_UPDATE$/i.test(line)) {started=true;continue}
+   const em=line.match(/^EFFECTIVE_FROM\\s*:\\s*(\\d{4}-\\d{2}-\\d{2})$/i); if(em){effective=em[1];continue}
+   if(/^END$/i.test(line)) break;
+   if(/^(HSN\\s*\\|.*NEW_RATE|HSN\\s*\\|\\s*PRODUCT)/i.test(line)) {started=true;continue}
+   if(line.startsWith('#')) continue;
+   const p=line.split('|').map(x=>x.trim());
+   if(p.length===2 && /^\\d{4,8}$/.test(p[0])) rows.push({hsn_code:p[0],product_name:'',old_rate:null,new_rate:Number(p[1])});
+   else if(p.length>=4 && /^\\d{4,8}$/.test(p[0])) rows.push({hsn_code:p[0],product_name:p[1],old_rate:Number(p[2]),new_rate:Number(p[3])});
+ }
+ if(!effective) throw Error('Missing EFFECTIVE_FROM: YYYY-MM-DD');
+ if(!rows.length) throw Error('No GST rows found. Use the DeliveryOS GST template format.');
+ for(const x of rows) if(!Number.isFinite(x.new_rate)||x.new_rate<0||x.new_rate>100) throw Error('Invalid GST rate for HSN '+x.hsn_code);
+ return {effective,rows};
+}
+async function gstUpdatePreview(b,text){
+ const parsed=parseGstUpdateText(text),out=[];
+ for(const x of parsed.rows){
+   const master=await get('SELECT * FROM hsn_master WHERE business_id=? AND code=?',[b,x.hsn_code]);
+   const products=await all('SELECT id,name,gst_rate FROM items WHERE business_id=? AND hsn_code=? ORDER BY name',[b,x.hsn_code]);
+   const current=master?Number(master.gst_rate):products.length?Number(products[0].gst_rate||0):null;
+   out.push({...x,current_rate:current,master_found:!!master,product_count:products.length,products,changed:current===null||money(current)!==money(x.new_rate)});
+ }
+ return {effective_from:parsed.effective,rows:out};
+}
+async function applyGstUpdate(b,text,userId){
+ const preview=await gstUpdatePreview(b,text);
+ await run('BEGIN IMMEDIATE');
+ try{
+   for(const x of preview.rows){
+     const current=x.current_rate===null?x.new_rate:Number(x.current_rate);
+     await run('INSERT INTO hsn_master(business_id,code,description,gst_rate,active) VALUES(?,?,?,?,1) ON CONFLICT(business_id,code) DO UPDATE SET gst_rate=excluded.gst_rate,active=1',[b,x.hsn_code,x.product_name||'',x.new_rate]);
+     await run('UPDATE items SET gst_rate=? WHERE business_id=? AND hsn_code=?',[x.new_rate,b,x.hsn_code]);
+     if(money(current)!==money(x.new_rate)) await run('INSERT INTO gst_rate_history(business_id,hsn_code,product_name,old_rate,new_rate,effective_from,source) VALUES(?,?,?,?,?,?,?)',[b,x.hsn_code,x.product_name,current,x.new_rate,preview.effective_from,'TEMPLATE']);
+   }
+   await audit(b,userId,'GST_UPDATE','GST_RATE',null,JSON.stringify({effective_from:preview.effective_from,rows:preview.rows.length}));
+   await run('COMMIT'); return preview;
+ }catch(e){await run('ROLLBACK').catch(()=>{});throw e}
+}
 async function waStatus(b){return get('SELECT * FROM whatsapp_sessions WHERE business_id=?',[b])} async function setWa(b,s,m,q){return run('INSERT INTO whatsapp_sessions(business_id,status,message,qr,updated_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(business_id) DO UPDATE SET status=excluded.status,message=excluded.message,qr=excluded.qr,updated_at=CURRENT_TIMESTAMP',[b,s,m||'',q||null])}
 async function audit(b,u,a,e,id,d){return run('INSERT INTO audit_logs(business_id,user_id,action,entity,entity_id,details) VALUES(?,?,?,?,?,?)',[b,u,a,e,id,d||''])}
-module.exports={get,all,run,ready,register,login,session,logout,business,updateBusiness,items,addItem,editItem,stockIn,addStockFromWhatsApp,deleteItem,transactions,senders,addSender,editSender,delSender,sender,lid,saveLid,createOrder,createManualOrder,orders,order,claimConfirmation,confirmationSent,confirmationPending,claimProcessedMessage,savePendingOrderConfirmation,getPendingOrderConfirmation,clearPendingOrderConfirmation,returnsForOrder,createOrderReturn,customers,addCustomer,findCustomerByName,invoices,invoice,createInvoice,ordersForCustomer,billableOrdersForCustomer,finalizeInvoice,cancelInvoice,purchaseBills,createPurchase,purchase,addPurchaseItem,confirmPurchase,makeSku,dashboard,salesAnalytics,waStatus,setWa,audit,normalizePhone,hsnMaster,addHsn,updateHsn,deleteHsn,aliases,addAlias,deleteAlias,normalizeProductText};
+module.exports={get,all,run,ready,register,login,session,logout,business,updateBusiness,items,addItem,editItem,stockIn,addStockFromWhatsApp,deleteItem,transactions,senders,addSender,editSender,delSender,sender,lid,saveLid,createOrder,createManualOrder,orders,order,claimConfirmation,confirmationSent,confirmationPending,claimProcessedMessage,savePendingOrderConfirmation,getPendingOrderConfirmation,clearPendingOrderConfirmation,returnsForOrder,createOrderReturn,customers,addCustomer,findCustomerByName,invoices,invoice,createInvoice,ordersForCustomer,billableOrdersForCustomer,finalizeInvoice,cancelInvoice,purchaseBills,createPurchase,purchase,addPurchaseItem,confirmPurchase,makeSku,dashboard,salesAnalytics,waStatus,setWa,audit,normalizePhone,hsnMaster,addHsn,updateHsn,deleteHsn,aliases,addAlias,deleteAlias,normalizeProductText,gstUpdatePreview,applyGstUpdate};
