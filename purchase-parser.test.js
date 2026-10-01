@@ -160,3 +160,64 @@ assert.equal(loose.invoice_total,4012);
   assert.strictEqual(p.sgst,2563.92);
   assert.strictEqual(p.invoice_total,38026);
 }
+
+
+{
+  // Complete purchase-invoice regression matching the supplied GST bill.
+  const bill=[
+    'Tax Invoice Original / Duplicate Bill',
+    'GSTIN: 07BGUPD3647XXXX',
+    'SUNRISE ENTERPRISE',
+    'General Store - Delhi-181005',
+    '# S-50, 3rd Cross PTC Building, I.T. Estate, New Delhi-1358XX',
+    'Contact No. : +91-985689XXX9, +91-98458XXX38',
+    'Bill To',
+    'Name : Rajiv Gupta',
+    'Address : # S-50, 3rd PTC Building, I.T. Estate, Delhi-1358XX',
+    'State Delhi - 07',
+    'GSTIN : HVBADAXX456',
+    'Ship To',
+    'Name : Rajiv Gupta',
+    'Inv. No. : Inv-5',
+    'Inv. Date: 10-01-25',
+    'Payment Mode : UPI',
+    'Reverse Charge : YES',
+    "Buyer's Order No : B4589",
+    "Supplier's Ref. : S145",
+    'Vehicle Number : V1456',
+    '1 Best Ball Pen 1495 2 Nos 10.00 20.00 12 2.40 22.40',
+    '2 Executive Diary 1256 8 Box 590.00 4720.00 12 566.40 5286.40',
+    '3 Leather Portfolio Folder 1258 2 Box 630.00 1260.00 12 151.20 1411.20',
+    '4 Wireless Mouse 4589 9 Nos 520.00 4680.00 18 842.40 5522.40',
+    '5 A4 Document File 4587 5 Pkt 420.00 2100.00 12 252.00 2352.00',
+    '6 Power Bank 10000mAh 1248 9 Nos 570.00 5130.00 12 615.60 5745.60',
+    '7 USB Flash Drive 1256 12 Pkt 999.00 11988.00 18 2157.84 14145.84',
+    '8 Bluetooth Keyboard 2536 4 Box 750.00 3000.00 18 540.00 3540.00',
+    'Sub-Total: 32898 5127.84 38025.84',
+    'CGST Amt : 2563.92',
+    'SGST Amt : 2563.92',
+    'Round off : 0.16',
+    'Total Amount : 38026.00'
+  ].join(String.fromCharCode(10));
+  const p=parseBill(bill);
+  assert.strictEqual(p.supplier_name,'SUNRISE ENTERPRISE');
+  assert.strictEqual(p.supplier_gstin,'07BGUPD3647XXXX');
+  assert.strictEqual(p.supplier_phone,'+91-985689XXX9, +91-98458XXX38');
+  assert.strictEqual(p.buyer_name,'Rajiv Gupta');
+  assert.strictEqual(p.buyer_gstin,'HVBADAXX456');
+  assert.strictEqual(p.invoice_number,'Inv-5');
+  assert.strictEqual(p.invoice_date,'10-01-25');
+  assert.strictEqual(p.payment_method,'UPI');
+  assert.strictEqual(p.reverse_charge,'YES');
+  assert.strictEqual(p.buyer_order_number,'B4589');
+  assert.strictEqual(p.supplier_reference,'S145');
+  assert.strictEqual(p.vehicle_number,'V1456');
+  assert.strictEqual(p.items.length,8);
+  assert.deepStrictEqual(p.items.map(x=>x.quantity),[2,8,2,9,5,9,12,4]);
+  assert.deepStrictEqual(p.items.map(x=>x.purchase_price),[10,590,630,520,420,570,999,750]);
+  assert.strictEqual(p.taxable_total,32898);
+  assert.strictEqual(p.cgst,2563.92);
+  assert.strictEqual(p.sgst,2563.92);
+  assert.strictEqual(p.tax_total,5127.84);
+  assert.strictEqual(p.invoice_total,38026);
+}
