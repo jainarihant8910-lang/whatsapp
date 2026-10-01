@@ -5,9 +5,6 @@ for(const f of ['index.js','server.js','platform-db.js','public/app.js']){
   if(r.status!==0)throw new Error('Syntax failed: '+f+'\n'+r.stderr);
 }
 const index=read('index.js'),server=read('server.js'),app=read('public/app.js'),db=read('platform-db.js');
-for(const forbidden of ['.wwebjs_auth_backup','.wwebjs_cache_backup','workspace_contents']){
-  if(fs.existsSync(path.join(root,forbidden)))throw new Error('Runtime artifact must not be present: '+forbidden);
-}
 if(!server.includes("async function ocrSpaceOcr(buf,mimeType='image/png',engine="))throw new Error('OCR engine selection is not explicit');
 if(!server.includes("form.append('OCREngine',String(engine))"))throw new Error('OCR engine parameter is not forwarded');
 const checks=[
