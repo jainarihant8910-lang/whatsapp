@@ -119,6 +119,13 @@ app.get('/api/auth/me',auth,async(r,s)=>{try{require('./index').startBusiness(r.
 app.use('/api',auth); app.use('/api',csrf);
 app.get('/api/dashboard',async(r,s)=>s.json(await db.dashboard(r.businessId)));
 app.get('/api/items',async(r,s)=>s.json({items:await db.items(r.businessId)}));
+app.get('/api/hsn',async(r,s)=>s.json({hsn:await db.hsnMaster(r.businessId)}));
+app.post('/api/hsn',async(r,s)=>{try{s.status(201).json({hsn:await db.addHsn(r.businessId,r.body)})}catch(e){s.status(400).json({error:e.message})}});
+app.put('/api/hsn/:id',async(r,s)=>{try{s.json({hsn:await db.updateHsn(r.businessId,Number(r.params.id),r.body)})}catch(e){s.status(400).json({error:e.message})}});
+app.delete('/api/hsn/:id',async(r,s)=>{try{s.json(await db.deleteHsn(r.businessId,Number(r.params.id)))}catch(e){s.status(400).json({error:e.message})}});
+app.get('/api/items/:id/aliases',async(r,s)=>s.json({aliases:await db.aliases(r.businessId,Number(r.params.id))}));
+app.post('/api/items/:id/aliases',async(r,s)=>{try{s.status(201).json({alias:await db.addAlias(r.businessId,Number(r.params.id),r.body.alias)})}catch(e){s.status(400).json({error:e.message})}});
+app.delete('/api/item-aliases/:id',async(r,s)=>{try{s.json(await db.deleteAlias(r.businessId,Number(r.params.id)))}catch(e){s.status(400).json({error:e.message})}});
 app.post('/api/items',async(r,s)=>{try{s.status(201).json({item:await db.addItem(r.businessId,r.body)})}catch(e){s.status(400).json({error:e.message})}});
 app.put('/api/items/:id',async(r,s)=>{try{s.json({item:await db.editItem(r.businessId,Number(r.params.id),r.body)})}catch(e){s.status(400).json({error:e.message})}});
 app.delete('/api/items/:id',async(r,s)=>{try{s.json(await db.deleteItem(r.businessId,Number(r.params.id)))}catch(e){s.status(400).json({error:e.message})}});
