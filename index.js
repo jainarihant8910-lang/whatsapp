@@ -146,51 +146,86 @@ function parse(body) {
 }
 
 async function phone(message, client, businessId) {
-  const from = String(message?.from || '');
-  const author = String(message?.author || '');
-  if (!from || from.endsWith('@g.us')) return null;
+  const candidates = [
+    message?.from,
+    message?.author,
+    message?.rawData?.key?.participant,
+    message?.rawData?.key?.remoteJid
+  ].filter(Boolean).map(String);
 
-  // Normal phone JID.
-  const direct = [from, author, message?.rawData?.key?.participant, message?.rawData?.key?.remoteJid]
-    .filter(Boolean).map(String).find(x => x.endsWith('@c.us'));
+  if (!candidates.length || candidates.some(x => x.endsWith('@g.us'))) return null;
+
+  // Prefer a real WhatsApp phone JID when it is present.
+  const direct = candidates.find(x => x.endsWith('@c.us'));
   if (direct) return db.normalizePhone(direct.replace(/@c\.us$/i, ''));
 
-  // WhatsApp privacy LID. whatsapp-web.js exposes an official resolver for this.
-  const lidJid = [from, author, message?.rawData?.key?.participant, message?.rawData?.key?.remoteJid]
-    .filter(Boolean).map(String).find(x => x.endsWith('@lid'));
+  // WhatsApp may expose the sender only as a privacy LID.
+  const lidJid = candidates.find(x => x.endsWith('@lid'));
   if (!lidJid) return null;
 
   const lid = lidJid.replace(/@lid$/i, '');
   const old = await db.lid(businessId, lid);
-  if (old) return old;
+  if (old) return db.normalizePhone(old);
 
-  try {
-    const result = await client.getContactLidAndPhone([lidJid]);
-    const row = result?.find?.(x => String(x?.lid || '') === lidJid) || result?.[0];
-    const raw = String(row?.pn || '');
-    const p = db.normalizePhone(raw.replace(/@c\.us$/i, ''));
-    if (p) {
-      await db.saveLid(businessId, lid, p);
-      return p;
+  const saveResolved = async (row, source) => {
+    const returnedLid = String(row?.lid || '').trim();
+    const returnedPhone = String(row?.pn || row?.phone || '').trim();
+
+    // whatsapp-web.js returns { lid: "...@lid", pn: "...@c.us" }.
+    // Never treat the LID itself as the sender phone.
+    if (!returnedPhone || returnedPhone.endsWith('@lid')) return null;
+
+    const p = db.normalizePhone(
+      returnedPhone
+        .replace(/@c\.us$/i, '')
+        .replace(/@s\.whatsapp\.net$/i, '')
+    );
+    if (!p) return null;
+
+    const mappedLid = returnedLid.replace(/@lid$/i, '') || lid;
+    await db.saveLid(businessId, mappedLid, p);
+    await db.saveLid(businessId, lid, p);
+    console.log('Resolved WhatsApp LID', lidJid, '->', p, '(' + source + ')');
+    return p;
+  };
+
+  // Official whatsapp-web.js resolver. It accepts an array of user IDs.
+  // Try the exact JID first, then the bare LID as WhatsApp versions differ
+  // in what they accept internally.
+  for (const userId of [lidJid, lid]) {
+    try {
+      const result = await client.getContactLidAndPhone([userId]);
+      const row = Array.isArray(result)
+        ? (result.find(x => {
+            const rlid = String(x?.lid || '').replace(/@lid$/i, '');
+            return rlid === lid;
+          }) || result[0])
+        : result;
+      const p = await saveResolved(row, 'getContactLidAndPhone');
+      if (p) return p;
+    } catch (e) {
+      console.error('LID -> phone lookup failed for', userId, ':', e.message);
     }
-  } catch (e) {
-    console.error('LID -> phone lookup failed:', e.message);
   }
 
+  // Last fallback: message.getContact() can expose the real phone number
+  // through contact.number even when the message JID itself is @lid.
   try {
     const contact = await message.getContact();
-    const raw = String(contact?.number || contact?.id?._serialized || contact?.id?.user || '');
-    if (!raw.endsWith('@lid')) {
-      const p = db.normalizePhone(raw.replace(/@c\.us$/i, ''));
+    const raw = String(contact?.number || contact?.phoneNumber || '');
+    if (raw && !raw.includes('@lid')) {
+      const p = db.normalizePhone(raw.replace(/@c\.us$/i, '').replace(/@s\.whatsapp\.net$/i, ''));
       if (p) {
         await db.saveLid(businessId, lid, p);
+        console.log('Resolved WhatsApp LID', lidJid, '->', p, '(contact fallback)');
         return p;
       }
     }
   } catch (e) {
-    console.error('Contact phone lookup failed:', e.message);
+    console.error('Contact phone lookup failed for LID', lidJid, ':', e.message);
   }
 
+  console.error('Could not resolve WhatsApp LID to a real phone number:', lidJid);
   return null;
 }
 
