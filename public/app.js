@@ -28,14 +28,14 @@ async function manageAliases(id,name){
  $('aliasForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/items/'+id+'/aliases',{method:'POST',body:{alias:new FormData(e.target).get('alias')}});manageAliases(id,name)}catch(x){toast(x.message,true)}};
 }
 async function deleteAlias(aliasId,itemId,name){try{await api('/api/item-aliases/'+aliasId,{method:'DELETE'});manageAliases(itemId,name)}catch(e){toast(e.message,true)}}
-async async function openProduct(){
+async async function openProduct(prefill={}){
  const hm=await api('/api/hsn');
  modal('Add product',`<form id='productForm' class='formgrid'>
- <label class='wide'>Product name <span class='muted'>Search classification ↗</span><div class='inputrow'><input id='productName' name='name' required placeholder='e.g. A4 paper, cutting machine, mobile phone'><button type='button' title='Search product classification' onclick='searchProductClassification()'>🔍</button></div></label>
- <label>Product group/category<input id='productCategory' name='category' placeholder='Auto-filled from classification'></label>
- <label>SKU<input id='productSku' name='sku' placeholder='Leave blank to auto-generate'></label>
+ <label class='wide'>Product name <span class='muted'>Search classification ↗</span><div class='inputrow'><input id='productName' name='name' required value='${esc(prefill.name||'')}' placeholder='e.g. A4 paper, cutting machine, mobile phone'><button type='button' title='Search product classification' onclick='searchProductClassification()'>🔍</button></div></label>
+ <label>Product group/category<input id='productCategory' name='category' value='${esc(prefill.category||'')}' placeholder='Auto-filled from classification'></label>
+ <label>SKU<input id='productSku' name='sku' value='${esc(prefill.sku||'')}' placeholder='Leave blank to auto-generate'></label>
  <label>HSN/SAC<div class='inputrow'><select name='hsn_code' id='productHsn'><option value=''>Select from HSN master</option></select><button type='button' title='Search HSN / GST' onclick='searchProductClassification()'>🔍</button></div></label>
- <label>GST %<input id='productGst' name='gst_rate' type='number' min='0' step='0.01' placeholder='Auto-filled'></label>
+ <label>GST %<input id='productGst' name='gst_rate' type='number' min='0' step='0.01' value='${esc(prefill.gst_rate??'')}' placeholder='Auto-filled'></label>
  <label>Unit<input name='unit' value='PCS'></label><label>Opening stock<input name='opening_stock' type='number' min='0' value='0'></label><label>Minimum stock<input name='minimum_stock' type='number' min='0' value='0'></label><label>Purchase price<input name='purchase_price' type='number' min='0' step='0.01'></label><label>Selling price<input name='selling_price' type='number' min='0' step='0.01'></label><button class='primary'>Save product</button></form>`);
  const hs=$('productHsn');(hm.hsn||[]).forEach(x=>{const o=document.createElement('option');o.value=x.code;o.textContent=x.code+' — '+x.description+' ('+n(x.gst_rate)+'%)';hs.appendChild(o)});
  $('productForm').onsubmit=async e=>{e.preventDefault();try{const d=Object.fromEntries(new FormData(e.target));await api('/api/items',{method:'POST',body:d});$('modal').classList.add('hidden');toast('Product saved');productsPage()}catch(x){toast(x.message,true)}}
@@ -52,11 +52,10 @@ async function searchProductClassification(){
  }catch(e){toast(e.message,true)}
 }
 function applyClassification(x){
- const set=(id,v)=>{const el=$(id);if(el)el.value=v??''};
- set('productHsn',x.hsn_code);set('productGst',x.gst_rate||0);set('productCategory',x.category||x.description||'');
  const name=String($('productName')?.value||'').trim();
- if(name && !String($('productSku')?.value||'').trim())set('productSku',makeLocalSku(name,x.hsn_code));
+ const sku=String($('productSku')?.value||'').trim()||makeLocalSku(name,x.hsn_code);
  $('modal').classList.add('hidden');
+ openProduct({name,category:x.category||x.description||'',sku,hsn_code:x.hsn_code,gst_rate:x.gst_rate||0});
  toast('HSN, GST, group and SKU filled from classification');
 }
 function makeLocalSku(name,hsn){const words=String(name).toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim().split(/\\s+/).filter(Boolean);const prefix=words.slice(0,3).map(x=>x.slice(0,3)).join('');return (prefix||'PRD')+'-'+String(hsn||'').replace(/\\D/g,'').slice(-4)+'-'+Date.now().toString().slice(-4)}
