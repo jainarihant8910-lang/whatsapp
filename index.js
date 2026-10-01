@@ -455,6 +455,58 @@ async function startBusiness(businessId, force = false) {
         return;
       }
 
+      // If a previous order is waiting for an insufficient-stock confirmation,
+      // the next message from the same approved sender resolves that hold.
+      const earlySenderPhone = await phone(message, client, businessId);
+      if (earlySenderPhone) {
+        const pending = await db.getPendingOrderConfirmation(businessId, earlySenderPhone);
+        if (pending) {
+          const allowedPending = await db.sender(businessId, earlySenderPhone);
+          if (!allowedPending) return;
+          if (/^(ok|okay|yes|confirm)$/i.test(body.trim())) {
+            try {
+              const payload = pending.payload;
+              const order = await db.createOrder(payload);
+              await db.clearPendingOrderConfirmation(businessId, pending.id);
+              const confirmationClaimed = await db.claimConfirmation(businessId, order.id);
+              if (!confirmationClaimed) return;
+              const reply =
+                '📦 *ORDER #' + order.id + '*\\n\\n' +
+                '*Delivered to:* ' + order.delivered_to + '\\n' +
+                '*Status:* ' + (order.status === 'SUCCESS' ? '✅ ACCEPTED' : '❌ REJECTED') + '\\n' +
+                '*Accepted:* ' + Number(order.accepted_items || 0) + ' item(s)\\n' +
+                '*Rejected:* ' + Number(order.rejected_items || 0) + ' item(s)';
+              const sent = await client.sendMessage(from, reply, {
+                ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
+                ignoreQuoteErrors: true,
+                waitUntilMsgSent: true
+              });
+              if (!sent) throw new Error('WhatsApp returned no sent message');
+              await db.confirmationSent(businessId, order.id, sent?.id?._serialized || sent?.id?.$1 || sent?.id?.id || '');
+            } catch (e) {
+              await db.clearPendingOrderConfirmation(businessId, pending.id).catch(() => {});
+              if (e?.code === 'INSUFFICIENT_STOCK_CONFIRMATION') {
+                await client.sendMessage(from, '❌ *ORDER REJECTED*\\n\\nStock is still insufficient for one or more products. No stock was changed.', {
+                  ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
+                  ignoreQuoteErrors: true,
+                  waitUntilMsgSent: true
+                });
+              } else {
+                console.error('Pending order confirmation failed:', e);
+              }
+            }
+          } else {
+            await db.clearPendingOrderConfirmation(businessId, pending.id);
+            await client.sendMessage(from, '❌ *ORDER REJECTED*\\n\\nThe pending order was not confirmed, so no stock was changed.', {
+              ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
+              ignoreQuoteErrors: true,
+              waitUntilMsgSent: true
+            });
+          }
+          return;
+        }
+      }
+
       if (inFlightMessageIds.has(incomingKey)) return;
       inFlightMessageIds.add(incomingKey);
 
@@ -503,6 +555,43 @@ async function startBusiness(businessId, force = false) {
             items: parsed.items
           });
         } catch (e) {
+          if (e?.code === 'INSUFFICIENT_STOCK_CONFIRMATION') {
+            const lines = (e.shortages || []).map(x =>
+              '• *' + x.name + '* — requested: ' + x.requested + ' ' + x.unit + ', available: ' + x.available + ' ' + x.unit
+            ).join('\\n');
+            const payload = {
+              businessId,
+              date: t.date,
+              time: t.time,
+              deliveredTo: parsed.deliveredTo,
+              senderId: allowed.id,
+              whatsappMessageId,
+              whatsappFrom: from,
+              body,
+              senderPhone,
+              items: parsed.items
+            };
+            await db.savePendingOrderConfirmation(businessId, {
+              senderPhone,
+              whatsappFrom: from,
+              originalMessageId: whatsappMessageId,
+              payload
+            });
+            const reply =
+              '⚠️ *INSUFFICIENT STOCK*\\n\\n' +
+              lines +
+              '\\n\\n*The order is currently on hold.*\\n' +
+              'Reply *OKAY* to place the order with the available stock, or reply anything else to reject it.\\n' +
+              '_No stock has been changed yet._';
+            const sent = await client.sendMessage(from, reply, {
+              ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
+              ignoreQuoteErrors: true,
+              waitUntilMsgSent: true
+            });
+            if (!sent) throw new Error('WhatsApp returned no sent message');
+            await db.setWa(businessId, 'CONNECTED', 'Order held for insufficient-stock confirmation.', null).catch(() => {});
+            return;
+          }
           if (e?.code === 'AMBIGUOUS_PRODUCT') {
             const choices = (e.candidates || []).map((x, i) =>
               (i + 1) + '. ' + x.name + (x.sku ? ' [' + x.sku + ']' : '')
