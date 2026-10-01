@@ -61,6 +61,39 @@ async function updateBusiness(id,d){await run('UPDATE businesses SET name=?,gsti
 async function items(b){await ensureProductCategory();return all('SELECT *,CASE WHEN current_stock<=minimum_stock THEN 1 ELSE 0 END low_stock FROM items WHERE business_id=? ORDER BY name',[b])}
 async function addItem(b,d){await ensureProductCategory();const name=clean(d.name);if(!name)throw Error('Product name required');const sku=clean(d.sku)||makeSku(name,d.hsn_code);const opening=Math.max(0,Number(d.opening_stock||0));const r=await run('INSERT INTO items(business_id,name,sku,hsn_code,category,unit,opening_stock,current_stock,minimum_stock,purchase_price,selling_price,gst_rate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',[b,name,sku,clean(d.hsn_code),clean(d.category),clean(d.unit)||'PCS',opening,opening,Math.max(0,Number(d.minimum_stock||0)),money(d.purchase_price),money(d.selling_price),money(d.gst_rate)]);if(opening)await run('INSERT INTO stock_transactions(business_id,item_id,type,quantity,reason) VALUES(?,?,"IN",?,?)',[b,r.lastID,opening,'Opening stock']);return get('SELECT * FROM items WHERE id=?',[r.lastID])}
 async function editItem(b,id,d){await ensureProductCategory();await run('UPDATE items SET name=?,sku=?,hsn_code=?,category=?,unit=?,minimum_stock=?,purchase_price=?,selling_price=?,gst_rate=? WHERE business_id=? AND id=?',[clean(d.name),clean(d.sku),clean(d.hsn_code),clean(d.category),clean(d.unit)||'PCS',Math.max(0,Number(d.minimum_stock||0)),money(d.purchase_price),money(d.selling_price),money(d.gst_rate),b,id]);return get('SELECT * FROM items WHERE business_id=? AND id=?',[b,id])}
+
+async function addStockFromWhatsApp(b,rows,reason='Stock added via WhatsApp'){
+  const input=Array.isArray(rows)?rows:[];
+  if(!input.length)throw Error('At least one stock line is required');
+  const resolved=[];
+  for(const x of input){
+    const q=Number(x.quantity),r=await resolveOrderProduct(b,x.item);
+    if(!(q>0))throw Error('Quantity must be greater than zero for '+clean(x.item));
+    if(r.match==='ambiguous'){
+      const e=Error('Multiple products match "'+clean(x.item)+'"');
+      e.code='AMBIGUOUS_PRODUCT';e.input=clean(x.item);e.candidates=r.candidates;throw e;
+    }
+    if(!r.product){
+      const e=Error('Product not found: '+clean(x.item));
+      e.code='PRODUCT_NOT_FOUND';e.input=clean(x.item);throw e;
+    }
+    resolved.push({product:r.product,quantity:q});
+  }
+  await run('BEGIN IMMEDIATE');
+  try{
+    const added=[];
+    for(const x of resolved){
+      const fresh=await get('SELECT * FROM items WHERE business_id=? AND id=?',[b,x.product.id]);
+      if(!fresh)throw Error('Product not found: '+x.product.name);
+      await run('UPDATE items SET current_stock=current_stock+? WHERE business_id=? AND id=?',[x.quantity,b,x.product.id]);
+      await run('INSERT INTO stock_transactions(business_id,item_id,type,quantity,reason) VALUES(?,?,"IN",?,?)',[b,x.product.id,x.quantity,clean(reason)||'Stock added via WhatsApp']);
+      added.push({id:x.product.id,name:fresh.name,sku:fresh.sku,unit:fresh.unit||'PCS',quantity:x.quantity,current_stock:Number(fresh.current_stock||0)+x.quantity});
+    }
+    await run('COMMIT');
+    return added;
+  }catch(e){await run('ROLLBACK').catch(()=>{});throw e}
+}
+
 async function stockIn(b,id,q,reason){q=Number(q);if(!(q>0))throw Error('Quantity must be greater than zero');const p=await get('SELECT * FROM items WHERE business_id=? AND id=?',[b,id]);if(!p)throw Error('Product not found');await run('UPDATE items SET current_stock=current_stock+? WHERE business_id=? AND id=?',[q,b,id]);await run('INSERT INTO stock_transactions(business_id,item_id,type,quantity,reason) VALUES(?,?,"IN",?,?)',[b,id,q,clean(reason)||'Manual stock addition']);return get('SELECT * FROM items WHERE id=?',[id])}
 async function deleteItem(b,id){
   const item=await get('SELECT * FROM items WHERE business_id=? AND id=?',[b,id]);
@@ -371,4 +404,4 @@ async function confirmPurchase(b,id,rows){
 async function dashboard(b){const one=async(s)=>Number((await get(s,[b]))?.c||0);return {orders:await one('SELECT COUNT(*) c FROM orders WHERE business_id=?'),products:await one('SELECT COUNT(*) c FROM items WHERE business_id=?'),lowStock:await one('SELECT COUNT(*) c FROM items WHERE business_id=? AND current_stock<=minimum_stock'),todayOrders:await one('SELECT COUNT(*) c FROM orders WHERE business_id=? AND date=date("now","localtime")'),pending:await one('SELECT COUNT(*) c FROM orders WHERE business_id=? AND status="PENDING"'),invoices:await one('SELECT COUNT(*) c FROM invoices WHERE business_id=?'),purchases:await one('SELECT COUNT(*) c FROM purchase_bills WHERE business_id=?'),stockValue:money((await get('SELECT COALESCE(SUM(current_stock*purchase_price),0) v FROM items WHERE business_id=?',[b]))?.v)}}
 async function waStatus(b){return get('SELECT * FROM whatsapp_sessions WHERE business_id=?',[b])} async function setWa(b,s,m,q){return run('INSERT INTO whatsapp_sessions(business_id,status,message,qr,updated_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(business_id) DO UPDATE SET status=excluded.status,message=excluded.message,qr=excluded.qr,updated_at=CURRENT_TIMESTAMP',[b,s,m||'',q||null])}
 async function audit(b,u,a,e,id,d){return run('INSERT INTO audit_logs(business_id,user_id,action,entity,entity_id,details) VALUES(?,?,?,?,?,?)',[b,u,a,e,id,d||''])}
-module.exports={get,all,run,ready,register,login,session,logout,business,updateBusiness,items,addItem,editItem,stockIn,deleteItem,transactions,senders,addSender,editSender,delSender,sender,lid,saveLid,createOrder,createManualOrder,orders,order,claimConfirmation,confirmationSent,confirmationPending,claimProcessedMessage,savePendingOrderConfirmation,getPendingOrderConfirmation,clearPendingOrderConfirmation,returnsForOrder,createOrderReturn,customers,addCustomer,findCustomerByName,invoices,invoice,createInvoice,ordersForCustomer,billableOrdersForCustomer,finalizeInvoice,cancelInvoice,purchaseBills,createPurchase,purchase,addPurchaseItem,confirmPurchase,makeSku,dashboard,waStatus,setWa,audit,normalizePhone,hsnMaster,addHsn,updateHsn,deleteHsn,aliases,addAlias,deleteAlias,normalizeProductText};
+module.exports={get,all,run,ready,register,login,session,logout,business,updateBusiness,items,addItem,editItem,stockIn,addStockFromWhatsApp,deleteItem,transactions,senders,addSender,editSender,delSender,sender,lid,saveLid,createOrder,createManualOrder,orders,order,claimConfirmation,confirmationSent,confirmationPending,claimProcessedMessage,savePendingOrderConfirmation,getPendingOrderConfirmation,clearPendingOrderConfirmation,returnsForOrder,createOrderReturn,customers,addCustomer,findCustomerByName,invoices,invoice,createInvoice,ordersForCustomer,billableOrdersForCustomer,finalizeInvoice,cancelInvoice,purchaseBills,createPurchase,purchase,addPurchaseItem,confirmPurchase,makeSku,dashboard,waStatus,setWa,audit,normalizePhone,hsnMaster,addHsn,updateHsn,deleteHsn,aliases,addAlias,deleteAlias,normalizeProductText};
