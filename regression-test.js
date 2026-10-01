@@ -19,7 +19,11 @@ const checks=[
  [db.includes("match:'ambiguous'"),'Ambiguous product detection is missing'],
  [db.includes('async function findOrderProduct'),'Exact/alias product fallback is missing'],
  [index.includes('AMBIGUOUS_PRODUCT'),'WhatsApp ambiguous-product handling is missing'],
- [index.includes('No order was created and no stock was changed'),'Ambiguous match safety message is missing']
+ [index.includes('No order was created and no stock was changed'),'Ambiguous match safety message is missing'],
+ [db.includes('INSUFFICIENT_STOCK_CONFIRMATION')||db.includes('savePendingOrderConfirmation'),'Insufficient-stock confirmation flow is missing'],
+ [index.includes('Reply *OKAY* to place the order'),'WhatsApp stock confirmation prompt is missing'],
+ [index.includes('getPendingOrderConfirmation'),'Pending order confirmation handling is missing'],
+ [index.includes('The pending order was not confirmed'),'Non-confirmation rejection message is missing']
 ];
 for(const [ok,msg] of checks)if(!ok)throw new Error(msg);
 console.log('Regression checks passed.');
