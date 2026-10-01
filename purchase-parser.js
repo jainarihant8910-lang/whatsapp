@@ -385,6 +385,14 @@ function parseBill(text){
     if(rate>0&&total>0)addItem(name,hsn,qty,unit,rate,taxable,gstRate,taxAmount,total);
   }
 
+  // Final safety pass: every OCR strategy above can create a candidate independently.
+  // Remove footer/summary candidates here as the last line of defense.
+  const footerWords=/^(?:total|subtotal|grand total|bill amount|invoice amount|total amount|amount after tax|amount due|net amount|taxable amount|total tax|tax amount|cgst|sgst|igst|cess|round off|rounding|discount|balance due|paid amount|payment|amount in words|terms and conditions|bank details)\\b/i;
+  for(let i=items.length-1;i>=0;i--){
+    const n=String(items[i].name||'').replace(/[^a-z0-9%]+/gi,' ').trim();
+    if(footerWords.test(n)||/^(?:rs|inr|rupees)?\\s*[\\d,]+(?:\\.\\d+)?(?:\\s+(?:only|rupees))?$/i.test(n))items.splice(i,1);
+  }
+
   const itemTaxableTotal=money(items.reduce((s,x)=>s+Number(x.taxable_value||0),0));
   const itemTaxTotal=money(items.reduce((s,x)=>s+Number(x.tax_amount||0),0));
   const itemInvoiceTotal=money(items.reduce((s,x)=>s+Number(x.line_total||0),0));
