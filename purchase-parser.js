@@ -323,7 +323,12 @@ function parseBill(text){
     if(!(rate>0))return false;
     if(!(taxable>0))taxable=money(q*rate);
     if(!(taxAmount>0)&&total>taxable)taxAmount=money(total-taxable);
-    if(!(gstRate>0)&&taxAmount>0&&taxable>0)gstRate=money(taxAmount/taxable*100);
+    if(!(gstRate>0)&&taxAmount>0&&taxable>0){
+      const inferred=money(taxAmount/taxable*100);
+      // Only infer standard GST slabs; rounded OCR values must not become
+      // arbitrary rates such as 11.04%.
+      if([3,5,12,18,28].some(x=>Math.abs(inferred-x)<0.25))gstRate=inferred;
+    }
     const key=[name.toLowerCase(),q,rate,hsn].join('|');
     if(looseRowSeen.has(key))return false;
     looseRowSeen.add(key);
