@@ -465,7 +465,7 @@ async function startBusiness(businessId, force = false) {
           if (!allowedPending) return;
           if (/^(ok|okay|yes|confirm)$/i.test(body.trim())) {
             try {
-              const payload = pending.payload;
+              const payload = {...pending.payload, allowPartialStock:true};
               const order = await db.createOrder(payload);
               await db.clearPendingOrderConfirmation(businessId, pending.id);
               const confirmationClaimed = await db.claimConfirmation(businessId, order.id);
