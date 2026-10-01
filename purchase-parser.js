@@ -74,6 +74,8 @@ function parseBill(text){
   const igst=ig.amount||amountAfter(/^Add\\s*:\\s*IGST\\b/i);
   const cgst=cg.amount||amountAfter(/^CGST\\s/i);
   const sgst=sg.amount||amountAfter(/^SGST\\s/i);
+  // Define the GST summary before any footer/product filtering can reference it.
+  const summaryTaxTotal=money(cgst+sgst+igst);
   const summaryGstRate=ig.rate||((cg.rate||0)+(sg.rate||0));
 
   const customerIdx=lines.findIndex(l=>/Customer Detail|Bill\s*To\b/i.test(l));
@@ -456,7 +458,6 @@ function parseBill(text){
 
   // Final safety pass: every OCR strategy above can create a candidate independently.
   // Remove footer/summary candidates here as the last line of defense.
-  const summaryTaxTotal=money(cgst+sgst+igst);
   const footerWords=/^(?:total|subtotal|grand total|bill amount|invoice amount|total amount|amount after tax|amount due|net amount|taxable amount|total tax|tax amount|cgst|sgst|igst|cess|round off|rounding|discount|balance due|paid amount|payment|amount in words|terms and conditions|bank details)\\b/i;
   for(let i=items.length-1;i>=0;i--){
     const n=String(items[i].name||'').replace(/[^a-z0-9%]+/gi,' ').trim();
