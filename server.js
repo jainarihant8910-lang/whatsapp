@@ -78,24 +78,33 @@ async function paddleOcrImage(buf){
   return run;
 }
 
-async function ocrSpaceOcr(buf,mimeType='image/png'){
+async function ocrSpaceOcr(buf,mimeType='image/png',engine=process.env.OCR_SPACE_ENGINE||'3',tableMode=process.env.OCR_SPACE_TABLE||'true'){
   const apiKey=String(process.env.OCR_SPACE_API_KEY||'').trim();
   if(!apiKey)throw new Error('OCR_SPACE_API_KEY is not configured');
 
   const form=new FormData();
   form.append('file',new Blob([buf],{type:mimeType}),mimeType==='application/pdf'?'bill.pdf':'bill');
   form.append('language',process.env.OCR_SPACE_LANGUAGE||'auto');
-  form.append('isTable',String(process.env.OCR_SPACE_TABLE||'true'));
+  form.append('isTable',String(tableMode));
   form.append('OCREngine',String(engine));
   form.append('isOverlayRequired','false');
   form.append('scale','true');
   form.append('detectOrientation','true');
 
-  const response=await fetch('https://api.ocr.space/parse/image',{
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),90000);
+  let response;
+  try{
+    response=await fetch('https://api.ocr.space/parse/image',{
     method:'POST',
     headers:{apikey:apiKey},
-    body:form
-  });
+    body:form,
+    signal:controller.signal
+    });
+  }catch(e){
+    if(e.name==='AbortError')throw new Error('OCR.space request timed out after 90 seconds');
+    throw e;
+  }finally{clearTimeout(timeout)}
   if(!response.ok)throw new Error('OCR.space HTTP '+response.status);
   const data=await response.json();
   if(data.IsErroredOnProcessing){
@@ -116,7 +125,7 @@ async function ocrSpaceOcrWithTableMode(buf,mimeType='image/png',tableMode='true
   form.append('file',new Blob([buf],{type:mimeType}),mimeType==='application/pdf'?'bill.pdf':'bill.'+(mimeType.split('/')[1]||'bin'));
   form.append('language',process.env.OCR_SPACE_LANGUAGE||'auto');
   form.append('isTable',String(tableMode));
-  form.append('OCREngine',String(process.env.OCR_SPACE_ENGINE||'3'));
+  form.append('OCREngine',String(engine));
   form.append('isOverlayRequired','false');
   form.append('scale','true');
   form.append('detectOrientation','true');
