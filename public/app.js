@@ -12,7 +12,30 @@ async function go(p){page=p;document.querySelectorAll('nav button').forEach(x=>x
 async function load(){try{if(page==='dashboard')return dashboard();if(page==='orders')return ordersPage();if(page==='products')return productsPage();if(page==='masters')return mastersPage();if(page==='customers')return customersPage();if(page==='senders')return sendersPage();if(page==='invoices')return invoicesPage();if(page==='transactions')return transactionsPage();if(page==='whatsapp')return whatsappPage();if(page==='settings')return settingsPage()}catch(e){toast(e.message,true)}}
 function card(title,value,sub){return `<div class='card'><small>${esc(title)}</small><strong>${esc(value)}</strong><span>${esc(sub||'')}</span></div>`}
 async function dashboard(){const d=await api('/api/dashboard');const p=await api('/api/items');items=p.items||[];$('page').innerHTML=`<div class='grid stats'>${card('Today orders',d.todayOrders,'WhatsApp + manual')}${card('All orders',d.orders,'Recorded deliveries')}${card('Products',d.products,'Inventory master')}${card('Low stock',d.lowStock,'Needs attention')}${card('Pending orders',d.pending,'Confirmation pending')}${card('Invoices',d.invoices,'Draft + finalized')}${card('Stock value','₹'+n(d.stockValue),'At purchase price')}</div><div class='grid two'><section class='panel'><h3>Quick actions</h3><div class='actions'><button class='primary' onclick="openProduct()">+ Product</button><button onclick="openCustomer()">+ Customer</button><button onclick="openMergeOrdersInvoice()">🔗 Merge orders</button></div></section><section class='panel'><h3>Low stock</h3>${items.filter(x=>x.low_stock).slice(0,8).map(x=>`<div class='row'><span>${esc(x.name)}</span><b>${n(x.current_stock)} / min ${n(x.minimum_stock)}</b></div>`).join('')||'<div class="muted">No low-stock products.</div>'}</section></div>`}
-async function productsPage(){const d=await api('/api/items');items=d.items||[];$('page').innerHTML=`<div class='bar'><div><h3>Products & stock</h3><p class='muted'>Selling price, GST, HSN, SKU and inventory. WhatsApp names can use saved aliases.</p></div><button class='primary' onclick="openProduct()">+ Add product</button></div><div class='panel tablewrap'><table><thead><tr><th>Product</th><th>SKU</th><th>HSN</th><th>Stock</th><th>Buy</th><th>Sell</th><th>GST</th><th></th></tr></thead><tbody>${items.map(x=>`<tr><td><b>${esc(x.name)}</b><small>${esc(x.unit)}</small></td><td>${esc(x.sku)}</td><td>${esc(x.hsn_code)}</td><td>${n(x.current_stock)} ${x.low_stock?'⚠️':''}</td><td>₹${n(x.purchase_price)}</td><td>₹${n(x.selling_price)}</td><td>${n(x.gst_rate)}%</td><td><button onclick='stockIn(${x.id})'>+ Stock</button>${Number(x.current_stock)===0?`<button class='danger' onclick='deleteProduct(${x.id},${JSON.stringify(x.name)})'>Delete</button>`:''}<button onclick='manageAliases(${x.id},${JSON.stringify(x.name)})'>Aliases</button></td></tr>`).join('')}</tbody></table></div>`}
+let productSearch='', productFilter='ALL';
+function renderProducts(){
+ const q=productSearch.toLowerCase().trim();
+ const filtered=items.filter(x=>{
+   const text=[x.name,x.sku,x.hsn_code,x.category,x.unit].join(' ').toLowerCase();
+   const matches=!q||text.includes(q);
+   const stock=Number(x.current_stock||0);
+   const matchesFilter=productFilter==='LOW'?!!x.low_stock:productFilter==='OUT'?stock===0:productFilter==='IN'?stock>0:true;
+   return matches&&matchesFilter;
+ });
+ const body=filtered.map(x=>`<tr><td><b>${esc(x.name)}</b><small>${esc(x.category||x.unit||'')}</small></td><td>${esc(x.sku)}</td><td>${esc(x.hsn_code)}</td><td>${n(x.current_stock)} ${x.low_stock?'⚠️':''}</td><td>₹${n(x.purchase_price)}</td><td>₹${n(x.selling_price)}</td><td>${n(x.gst_rate)}%</td><td><button onclick='stockIn(${x.id})'>+ Stock</button>${Number(x.current_stock)===0?`<button class='danger' onclick='deleteProduct(${x.id},${JSON.stringify(x.name)})'>Delete</button>`:''}<button onclick='manageAliases(${x.id},${JSON.stringify(x.name)})'>Aliases</button></td></tr>`).join('')||'<tr><td colspan="8" class="muted">No products match your search/filter.</td></tr>';
+ $('productTableBody').innerHTML=body;
+ $('productCount').textContent=`${filtered.length} of ${items.length} products`;
+}
+async function productsPage(){
+ const d=await api('/api/items');items=d.items||[];
+ $('page').innerHTML=`<div class='bar'><div><h3>Products & stock</h3><p class='muted'>Selling price, GST, HSN, SKU and inventory. WhatsApp names can use saved aliases.</p></div><button class='primary' onclick="openProduct()">+ Add product</button></div>
+ <div class='panel product-tools'><div class='searchbox'><span>🔍</span><input id='productSearch' placeholder='Search product, SKU, HSN or category…' autocomplete='off'><button type='button' onclick="productSearch=document.getElementById('productSearch').value;renderProducts()">Search</button></div><select id='productFilter'><option value='ALL'>All stock</option><option value='IN'>In stock</option><option value='LOW'>Low stock</option><option value='OUT'>Out of stock</option></select><span id='productCount' class='muted'></span></div>
+ <div class='panel tablewrap'><table><thead><tr><th>Product</th><th>SKU</th><th>HSN</th><th>Stock</th><th>Buy</th><th>Sell</th><th>GST</th><th></th></tr></thead><tbody id='productTableBody'></tbody></table></div>`;
+ $('productSearch').oninput=e=>{productSearch=e.target.value;renderProducts()};
+ $('productSearch').onkeydown=e=>{if(e.key==='Enter'){productSearch=e.target.value;renderProducts()}};
+ $('productFilter').onchange=e=>{productFilter=e.target.value;renderProducts()};
+ renderProducts();
+}
 async function mastersPage(){
  const d=await api('/api/hsn');const rows=d.hsn||[];
  $('page').innerHTML=`<div class='bar'><div><h3>SKU / HSN Master</h3><p class='muted'>Store HSN/SAC codes and GST rates here. DeliveryOS never invents an HSN code.</p></div><button class='primary' onclick='openHsn()'>+ Add HSN/SAC</button></div>
@@ -69,10 +92,29 @@ async function applyClassification(x){
 function makeLocalSku(name,hsn){const words=String(name).toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim().split(/\\s+/).filter(Boolean);const prefix=words.slice(0,3).map(x=>x.slice(0,3)).join('');return (prefix||'PRD')+'-'+String(hsn||'').replace(/\\D/g,'').slice(-4)+'-'+Date.now().toString().slice(-4)}
 async function stockIn(id){const q=prompt('Quantity to add');if(q===null)return;try{await api('/api/items/'+id+'/stock',{method:'POST',body:{quantity:Number(q),reason:'Manual stock addition'}});toast('Stock added');productsPage()}catch(e){toast(e.message,true)}}
 async function deleteProduct(id,name){if(!confirm('Delete "'+name+'" from Products? This is allowed only when stock is zero. Historical orders and stock history are kept.'))return;try{await api('/api/items/'+id,{method:'DELETE'});toast('Product deleted');productsPage()}catch(e){toast(e.message,true)}}
+let orderSearch='', orderStatus='ALL', orderSource='ALL';
+function renderOrders(){
+ const q=orderSearch.toLowerCase().trim();
+ const filtered=orders.filter(o=>{
+   const text=[o.id,o.delivered_to,o.item_names,o.items,o.date,o.status,o.source_type].join(' ').toLowerCase();
+   return (!q||text.includes(q)) &&
+     (orderStatus==='ALL'||String(o.status||'').toUpperCase()===orderStatus) &&
+     (orderSource==='ALL'||String(o.source_type||'WHATSAPP').toUpperCase()===orderSource);
+ });
+ const body=filtered.map(o=>`<tr><td>#${o.id}</td><td><span class='badge'>${String(o.source_type||'WHATSAPP')==='MANUAL'?'Manual':'WhatsApp'}</span></td><td>${esc(o.date)} ${esc(o.time)}</td><td>${esc(o.delivered_to)}</td><td>${esc(o.item_names||o.items||'View order')}</td><td>${n(o.accepted_items)}</td><td>${n(o.returned_items||0)}</td><td>${n(Math.max(0,Number(o.accepted_items||0)-Number(o.returned_items||0)))} </td><td><span class='badge ${String(o.status).toLowerCase()}'>${esc(o.status)}</span></td><td><button onclick="voice(${o.id})">🔊 Voice</button><button onclick="pdf('/api/orders/${o.id}/invoice-pdf')">🧾 Invoice PDF</button>${['SUCCESS','PARTIAL','PARTIAL_RETURN'].includes(o.status)?`<button onclick="openReturn(${o.id})">↩ Return</button>`:''}</td></tr>`).join('')||'<tr><td colspan="10" class="muted">No orders match your search/filter.</td></tr>';
+ $('orderTableBody').innerHTML=body;
+ $('orderCount').textContent=`${filtered.length} of ${orders.length} orders`;
+}
 async function ordersPage(){
-  const d=await api('/api/orders');orders=d.orders||[];
-  $('page').innerHTML=`<div class='bar'><div><h3>Orders</h3><p class='muted'>WhatsApp and manually entered orders are stored together. Returns automatically add stock back.</p></div><button class='primary' onclick="openManualOrder()">+ Manual order</button><button onclick="openReturnPicker()">↩ Quick return</button><button onclick="go('transactions')">Stock history</button></div>
-  <div class='panel tablewrap'><table><thead><tr><th>Order</th><th>Source</th><th>Date</th><th>Delivered to</th><th>Item names</th><th>Qty</th><th>Returned</th><th>Remaining</th><th>Status</th><th>Actions</th></tr></thead><tbody>${orders.map(o=>`<tr><td>#${o.id}</td><td><span class='badge'>${String(o.source_type||'WHATSAPP')==='MANUAL'?'Manual':'WhatsApp'}</span></td><td>${esc(o.date)} ${esc(o.time)}</td><td>${esc(o.delivered_to)}</td><td>${esc(o.item_names||o.items||'View order')}</td><td>${n(o.accepted_items)}</td><td>${n(o.returned_items||0)}</td><td>${n(Math.max(0,Number(o.accepted_items||0)-Number(o.returned_items||0)))} </td><td><span class='badge ${String(o.status).toLowerCase()}'>${esc(o.status)}</span></td><td><button onclick="voice(${o.id})">🔊 Voice</button><button onclick="pdf('/api/orders/${o.id}/invoice-pdf')">🧾 Invoice PDF</button>${['SUCCESS','PARTIAL','PARTIAL_RETURN'].includes(o.status)?`<button onclick="openReturn(${o.id})">↩ Return</button>`:''}</td></tr>`).join('')}</tbody></table></div>`;
+ const d=await api('/api/orders');orders=d.orders||[];
+ $('page').innerHTML=`<div class='bar'><div><h3>Orders</h3><p class='muted'>WhatsApp and manually entered orders are stored together. Returns automatically add stock back.</p></div><button class='primary' onclick="openManualOrder()">+ Manual order</button><button onclick="openReturnPicker()">↩ Quick return</button><button onclick="go('transactions')">Stock history</button></div>
+ <div class='panel order-tools'><div class='searchbox'><span>🔍</span><input id='orderSearch' placeholder='Search order, customer, product or date…' autocomplete='off'><button type='button' onclick="orderSearch=document.getElementById('orderSearch').value;renderOrders()">Search</button></div><select id='orderStatus'><option value='ALL'>All status</option><option value='SUCCESS'>Success</option><option value='PARTIAL'>Partial</option><option value='PARTIAL_RETURN'>Partial return</option><option value='RETURNED'>Returned</option><option value='PENDING'>Pending</option><option value='REJECTED'>Rejected</option></select><select id='orderSource'><option value='ALL'>All sources</option><option value='WHATSAPP'>WhatsApp</option><option value='MANUAL'>Manual</option></select><span id='orderCount' class='muted'></span></div>
+ <div class='panel tablewrap'><table><thead><tr><th>Order</th><th>Source</th><th>Date</th><th>Delivered to</th><th>Item names</th><th>Qty</th><th>Returned</th><th>Remaining</th><th>Status</th><th>Actions</th></tr></thead><tbody id='orderTableBody'></tbody></table></div>`;
+ $('orderSearch').oninput=e=>{orderSearch=e.target.value;renderOrders()};
+ $('orderSearch').onkeydown=e=>{if(e.key==='Enter'){orderSearch=e.target.value;renderOrders()}};
+ $('orderStatus').onchange=e=>{orderStatus=e.target.value;renderOrders()};
+ $('orderSource').onchange=e=>{orderSource=e.target.value;renderOrders()};
+ renderOrders();
 }
 async function openManualOrder(){
   const products=await api('/api/items'); const ps=products.items||[];
