@@ -548,7 +548,7 @@ async function startBusiness(businessId, force = false) {
         inFlightStockMessageIds.add(incomingKey);
         try {
           if (stockInParsed.error) {
-            await client.sendMessage(from, '❌ *STOCK NOT ADDED*\\n\\n' + stockInParsed.error + '\\n\\nUse:\\n*ADD STOCK*\\n250 Lakme Lotus Red\\n5 Taparia Universal Tool Kit', {
+            await client.sendMessage(from, '❌ *STOCK NOT ADDED*\n\n' + stockInParsed.error + '\n\nUse:\n*ADD STOCK*\n250 Lakme Lotus Red\n5 Taparia Universal Tool Kit', {
               ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
               ignoreQuoteErrors: true,
               waitUntilMsgSent: true
@@ -558,7 +558,7 @@ async function startBusiness(businessId, force = false) {
 
           const senderPhone = await phone(message, client, businessId);
           if (!senderPhone) {
-            await client.sendMessage(from, '❌ *STOCK NOT ADDED*\\n\\nCould not identify the sender phone number. Check the sender mapping in DeliveryOS.', {
+            await client.sendMessage(from, '❌ *STOCK NOT ADDED*\n\nCould not identify the sender phone number. Check the sender mapping in DeliveryOS.', {
               ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
               ignoreQuoteErrors: true,
               waitUntilMsgSent: true
@@ -568,7 +568,7 @@ async function startBusiness(businessId, force = false) {
 
           const allowed = await db.sender(businessId, senderPhone);
           if (!allowed) {
-            await client.sendMessage(from, '❌ *STOCK NOT ADDED*\\n\\nThis WhatsApp number is not approved in DeliveryOS Senders.', {
+            await client.sendMessage(from, '❌ *STOCK NOT ADDED*\n\nThis WhatsApp number is not approved in DeliveryOS Senders.', {
               ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
               ignoreQuoteErrors: true,
               waitUntilMsgSent: true
@@ -588,11 +588,11 @@ async function startBusiness(businessId, force = false) {
             if (e?.code === 'AMBIGUOUS_PRODUCT') {
               const choices = (e.candidates || []).map((x,i) =>
                 (i + 1) + '. ' + x.name + (x.sku ? ' [' + x.sku + ']' : '')
-              ).join('\\n');
+              ).join('\n');
               await client.sendMessage(from,
-                '⚠️ *STOCK NOT ADDED*\\n\\n' +
-                'I found more than one product matching *' + e.input + '*:\\n' + choices +
-                '\\n\\nReply with the exact product name or SKU.\\n_No stock was changed._',
+                '⚠️ *STOCK NOT ADDED*\n\n' +
+                'I found more than one product matching *' + e.input + '*:\n' + choices +
+                '\n\nReply with the exact product name or SKU.\n_No stock was changed._',
                 {
                   ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
                   ignoreQuoteErrors: true,
@@ -605,12 +605,12 @@ async function startBusiness(businessId, force = false) {
           }
 
           const reply =
-            '📥 *STOCK ADDED SUCCESSFULLY*\\n\\n' +
+            '📥 *STOCK ADDED SUCCESSFULLY*\n\n' +
             added.map(x =>
               '• *' + x.name + '* — +' + Number(x.quantity) + ' ' + (x.unit || 'PCS') +
               ' → *' + Number(x.current_stock || 0) + ' ' + (x.unit || 'PCS') + ' available*'
-            ).join('\\n') +
-            '\\n\\n_Stock transaction recorded in DeliveryOS._';
+            ).join('\n') +
+            '\n\n_Stock transaction recorded in DeliveryOS._';
 
           // whatsapp-web.js can successfully deliver a message while returning
           // no message object. Never turn a successful stock transaction into
@@ -630,7 +630,7 @@ async function startBusiness(businessId, force = false) {
         } catch (e) {
           console.error('WhatsApp stock-in failed before commit:', e.message);
           try {
-            await client.sendMessage(from, '❌ *STOCK NOT ADDED*\\n\\n' + e.message + '\\n_No stock was changed._', {
+            await client.sendMessage(from, '❌ *STOCK NOT ADDED*\n\n' + e.message + '\n_No stock was changed._', {
               ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
               ignoreQuoteErrors: true,
               waitUntilMsgSent: true
