@@ -2,17 +2,15 @@
   "name": "delivery-management-platform",
   "version": "2.0.0",
   "private": true,
-  "description": "Multi-business WhatsApp delivery, stock, purchase and GST invoicing platform",
+  "description": "Multi-business WhatsApp delivery, inventory and GST invoicing platform",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node regression-test.js && node --check database.js && node --check platform-db.js && node --check purchase-parser.js && node --check purchase-parser.test.js && node --check server.js && node --check index.js && node --check public/app.js",
+    "check": "node regression-test.js && node --check database.js && node --check platform-db.js && node --check server.js && node --check index.js && node --check public/app.js",
     "test": "node smoke-test.js",
     "test:qr": "node qr-stress-test.js",
-    "test:all": "npm run check && npm run test:parser && npm test && npm run test:qr",
-    "test:parser": "node purchase-parser.test.js",
+    "test:all": "npm run check && npm test && npm run test:qr",
     "test:soak": "node soak-test.js",
-    "setup:ocr": "node -e \"console.log('OCR.space is API-based; set OCR_SPACE_API_KEY in .env. No Python OCR installation is required.')\"",
     "test:regression": "node regression-test.js"
   },
   "engines": {
