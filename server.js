@@ -129,7 +129,15 @@ async function ocrSpaceOcrWithTableMode(buf,mimeType='image/png',tableMode='true
   form.append('isOverlayRequired','false');
   form.append('scale','true');
   form.append('detectOrientation','true');
-  const response=await fetch('https://api.ocr.space/parse/image',{method:'POST',headers:{apikey:apiKey},body:form});
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),90000);
+  let response;
+  try{
+    response=await fetch('https://api.ocr.space/parse/image',{method:'POST',headers:{apikey:apiKey},body:form,signal:controller.signal});
+  }catch(e){
+    if(e.name==='AbortError')throw new Error('OCR.space request timed out after 90 seconds');
+    throw e;
+  }finally{clearTimeout(timeout)}
   if(!response.ok)throw new Error('OCR.space HTTP '+response.status);
   const data=await response.json();
   if(data.IsErroredOnProcessing){
