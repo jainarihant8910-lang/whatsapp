@@ -30,18 +30,18 @@ const db=require('./platform-db');
   if(!after||Number(after.current_stock)!==8)throw new Error('Stock deduction smoke test failed');
 
   // Shortage must never mutate stock before confirmation.
-  await db.stockIn(business.id,item.id,2,'Shortage test refill');
-  const shortagePayload={...base,whatsappMessageId:'SHORT_'+suffix,items:[{quantity:5,item:'Smoke Product '+suffix}]};
+  // Leave the remaining stock at 8 so a 12-unit request requires confirmation.
+  const shortagePayload={...base,whatsappMessageId:'SHORT_'+suffix,items:[{quantity:12,item:'Smoke Product '+suffix}]};
   let shortage=false;
   try{await db.createOrder(shortagePayload)}catch(e){shortage=e.code==='INSUFFICIENT_STOCK_CONFIRMATION'}
   if(!shortage)throw new Error('Shortage confirmation was not required');
   after=(await db.items(business.id)).find(x=>x.id===item.id);
-  if(Number(after.current_stock)!==10)throw new Error('Stock changed before shortage confirmation');
+  if(Number(after.current_stock)!==8)throw new Error('Stock changed before shortage confirmation');
 
   const partial=await db.createOrder({...shortagePayload,allowPartialStock:true});
-  if(partial.status!=='PARTIAL'||Number(partial.accepted_items)!==5||Number(partial.rejected_items)!==0)throw new Error('Confirmed order should have accepted all available stock');
+  if(partial.status!=='PARTIAL'||Number(partial.accepted_items)!==8||Number(partial.rejected_items)!==4)throw new Error('Confirmed shortage should accept available stock and reject the shortfall');
   after=(await db.items(business.id)).find(x=>x.id===item.id);
-  if(Number(after.current_stock)!==5)throw new Error('Confirmed order stock deduction failed');
+  if(Number(after.current_stock)!==0)throw new Error('Confirmed order stock deduction failed');
 
   // Customer + two orders -> one merged invoice.
   const customer=await db.addCustomer(business.id,{name:'Smoke Customer',phone:'919888888888',state:'Test State',state_code:'09'});
