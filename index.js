@@ -783,7 +783,7 @@ async function startBusiness(businessId, force = false) {
               '⚠️ *INSUFFICIENT STOCK*\\n\\n' +
               lines +
               '\\n\\n*The order is currently on hold.*\\n' +
-              'Reply *OKAY* to create the order using whatever quantity is currently available; any unavailable quantity will be rejected. Reply anything else to reject the whole order.\\n' +
+              'Reply *OKAY* to create the order using whatever quantity is currently available; any unavailable quantity will be rejected. Reply *NO* to reject the whole order.\\n' +
               '_No stock has been changed yet._';
             const sent = await client.sendMessage(from, reply, {
               ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
