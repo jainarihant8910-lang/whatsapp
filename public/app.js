@@ -104,15 +104,16 @@ async function uploadBill(e){
     const d=await api('/api/purchases/extract',{method:'POST',body:fd}); const p=d.purchase;
     modal('Purchase bill extracted',`
       <div class='grid two'>
-        <div><b>Seller:</b> ${esc(p.supplier_name||'-')}<br><b>Seller ID:</b> ${esc(p.seller_id||'-')}<br><b>Seller GSTIN:</b> ${esc(p.supplier_gstin||'-')}<br><b>Seller PAN:</b> ${esc(p.seller_pan||'-')}<br><b>Seller address:</b> ${esc(p.seller_address||'-')}</div>
-        <div><b>Purchaser:</b> ${esc(p.buyer_name||'-')}<br><b>Purchaser ID:</b> ${esc(p.buyer_id||'-')}<br><b>Purchaser GSTIN:</b> ${esc(p.buyer_gstin||'-')}<br><b>Purchaser PAN:</b> ${esc(p.buyer_pan||'-')}<br><b>Invoice:</b> ${esc(p.invoice_number||'-')}<br><b>Date:</b> ${esc(p.invoice_date||'-')}</div>
-      </div>
+        <div><b>Seller:</b> ${esc(p.supplier_name||'-')}<br><b>Seller ID:</b> ${esc(p.seller_id||'-')}<br><b>Seller GSTIN:</b> ${esc(p.supplier_gstin||'-')}<br><b>Seller PAN:</b> ${esc(p.seller_pan||'-')}<br><b>Seller phone:</b> ${esc(p.seller_phone||'-')}<br><b>Seller address:</b> ${esc(p.seller_address||'-')}</div>
+        <div><b>Purchaser:</b> ${esc(p.buyer_name||'-')}<br><b>Purchaser ID:</b> ${esc(p.buyer_id||'-')}<br><b>Purchaser GSTIN:</b> ${esc(p.buyer_gstin||'-')}<br><b>Purchaser PAN:</b> ${esc(p.buyer_pan||'-')}<br><b>Purchaser address:</b> ${esc(p.buyer_address||'-')}<br><b>Invoice:</b> ${esc(p.invoice_number||'-')}<br><b>Date:</b> ${esc(p.invoice_date||'-')}<br><b>Payment:</b> ${esc(p.payment_method||'-')}<br><b>Reverse charge:</b> ${esc(p.reverse_charge||'-')}</div>      </div>
       <div class='tablewrap'><table><thead><tr><th>Product</th><th>SKU</th><th>HSN</th><th>Qty</th><th>Unit</th><th>Buying rate</th><th>GST</th><th>Line total</th></tr></thead><tbody>
       ${(p.items||[]).map(x=>`<tr><td>${esc(x.extracted_name)}</td><td>${esc(x.sku||'-')}</td><td>${esc(x.hsn_code||'-')}</td><td>${n(x.quantity)}</td><td>${esc(x.unit)}</td><td>₹${n(x.purchase_price)}</td><td>${n(x.gst_rate)}%</td><td>₹${n(x.line_total)}</td></tr>`).join('')}
       </tbody></table></div>
       <div class='grid stats'>
         <div class='card'><small>Taxable amount</small><strong>₹${n(p.taxable_total)}</strong></div>
+        <div class='card'><small>CGST / SGST</small><strong>₹${n(p.cgst)} / ₹${n(p.sgst)}</strong></div>
         <div class='card'><small>Total tax</small><strong>₹${n(p.tax_total)}</strong></div>
+        <div class='card'><small>Round off</small><strong>₹${n(p.round_off)}</strong></div>
         <div class='card'><small>Buying amount</small><strong>₹${n(p.invoice_total)}</strong></div>
       </div>
       <p class='muted'>No HSN, SKU or stock quantity needs to be typed manually. Existing products are matched automatically; missing products are created automatically with an SKU generated from the bill.</p>
