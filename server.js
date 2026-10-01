@@ -269,6 +269,7 @@ function mergePurchaseParses(primary,secondary){
     sgst:Number(b.sgst||0)||Number(a.sgst||0)||0,
     igst:Number(b.igst||0)||Number(a.igst||0)||0,
     invoice_total:Number(b.invoice_total||0)||Number(a.invoice_total||0)||0,
+    round_off:Number(b.round_off||0)||Number(a.round_off||0)||0,
     items
   };
 }
