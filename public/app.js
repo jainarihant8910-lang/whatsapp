@@ -66,6 +66,30 @@ async function invoicesPage(){const [d,ip,cp]=await Promise.all([api('/api/invoi
 function openInvoice(){if(!items.length||!customers.length){toast('Add at least one product and one customer first.',true);return}modal('Create invoice',`<form id='invoiceForm'><label>Customer<select name='customer_id' required>${customers.map(c=>`<option value='${c.id}'>${esc(c.name)} ${esc(c.gstin)}</option>`).join('')}</select></label><label>Date<input type='date' name='invoice_date' value='${new Date().toISOString().slice(0,10)}'></label><div id='invoiceRows'></div><button type='button' onclick='addInvoiceRow()'>+ Add line</button><button class='primary'>Create draft</button></form>`);addInvoiceRow();$('invoiceForm').onsubmit=async e=>{e.preventDefault();const rows=[...document.querySelectorAll('.invrow')].map(r=>({item_id:Number(r.querySelector('select').value),quantity:Number(r.querySelector('input').value)}));await api('/api/invoices',{method:'POST',body:{customer_id:Number(e.target.customer_id.value),invoice_date:e.target.invoice_date.value,items:rows}});$('modal').classList.add('hidden');toast('Draft invoice created');invoicesPage()}}
 function addInvoiceRow(){const x=document.createElement('div');x.className='invrow';x.innerHTML=`<select>${items.map(p=>`<option value='${p.id}'>${esc(p.name)} — ₹${n(p.selling_price)}</option>`).join('')}</select><input type='number' min='0.01' step='0.01' value='1'><button type='button' onclick='this.parentElement.remove()'>×</button>`;$('invoiceRows').appendChild(x)}
 async function finalizeInv(id){if(!confirm('Finalize invoice and deduct stock?'))return;try{await api('/api/invoices/'+id+'/finalize',{method:'POST'});toast('Invoice finalized');invoicesPage()}catch(e){toast(e.message,true)}} async function cancelInv(id){if(!confirm('Cancel this invoice? Finalized invoices reverse their stock movement.'))return;try{await api('/api/invoices/'+id+'/cancel',{method:'POST'});toast('Invoice cancelled');invoicesPage()}catch(e){toast(e.message,true)}}
+async function prepareBillFile(file){
+  if(!file||!file.type.startsWith('image/'))return file;
+  // OCR.space's current free API has a 1 MB upload limit. Camera photos are
+  // commonly larger, so resize/compress only the upload copy in the browser.
+  if(file.size<=900*1024)return file;
+  const bitmap=await createImageBitmap(file);
+  const maxSide=2200;
+  const scale=Math.min(1,maxSide/Math.max(bitmap.width,bitmap.height));
+  const canvas=document.createElement('canvas');
+  canvas.width=Math.max(1,Math.round(bitmap.width*scale));
+  canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+  canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);
+  bitmap.close();
+  for(const quality of [0.82,0.72,0.62,0.52,0.42]){
+    const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));
+    if(blob&&blob.size<=900*1024){
+      return new File([blob],String(file.name||'bill.jpg').replace(/\.[^.]+$/i,'.jpg'),{type:'image/jpeg',lastModified:Date.now()});
+    }
+  }
+  const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.35));
+  if(blob)return new File([blob],String(file.name||'bill.jpg').replace(/\.[^.]+$/i,'.jpg'),{type:'image/jpeg',lastModified:Date.now()});
+  return file;
+}
+
 async function purchasesPage(){
   const d=await api('/api/purchases');
   $('page').innerHTML=`<div class='bar'><div><h3>Purchase bills</h3><p class='muted'>Upload the supplier bill. The system extracts seller/buyer IDs, HSN, SKU, quantity, rate, GST and totals, then updates stock automatically when imported.</p></div><label class='upload primary'>📥 Upload bill<input id='bill' type='file' accept='.pdf,.jpg,.jpeg,.png,.webp' hidden></label></div>
@@ -74,8 +98,9 @@ async function purchasesPage(){
 }
 async function uploadBill(e){
   const f=e.target.files[0]; if(!f)return;
-  const fd=new FormData(); fd.append('bill',f);
   try{
+    const uploadFile=await prepareBillFile(f);
+    const fd=new FormData(); fd.append('bill',uploadFile,uploadFile.name);
     const d=await api('/api/purchases/extract',{method:'POST',body:fd}); const p=d.purchase;
     modal('Purchase bill extracted',`
       <div class='grid two'>
