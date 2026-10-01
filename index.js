@@ -488,18 +488,42 @@ async function startBusiness(businessId, force = false) {
         }
 
         const t = now();
-        const order = await db.createOrder({
-          businessId,
-          date: t.date,
-          time: t.time,
-          deliveredTo: parsed.deliveredTo,
-          senderId: allowed.id,
-          whatsappMessageId,
-          whatsappFrom: from,
-          body,
-          senderPhone,
-          items: parsed.items
-        });
+        let order;
+        try {
+          order = await db.createOrder({
+            businessId,
+            date: t.date,
+            time: t.time,
+            deliveredTo: parsed.deliveredTo,
+            senderId: allowed.id,
+            whatsappMessageId,
+            whatsappFrom: from,
+            body,
+            senderPhone,
+            items: parsed.items
+          });
+        } catch (e) {
+          if (e?.code === 'AMBIGUOUS_PRODUCT') {
+            const choices = (e.candidates || []).map((x, i) =>
+              (i + 1) + '. ' + x.name + (x.sku ? ' [' + x.sku + ']' : '')
+            ).join('\n');
+            const reply =
+              '⚠️ *PRODUCT NOT CLEAR*\\n\\n' +
+              'I found more than one product matching *' + e.input + '*:\\n' +
+              choices +
+              '\\n\\nPlease reply using the exact product name or SKU.\\n' +
+              '_No order was created and no stock was changed._';
+            const sent = await client.sendMessage(from, reply, {
+              ...(whatsappMessageId ? {quotedMessageId: whatsappMessageId} : {}),
+              ignoreQuoteErrors: true,
+              waitUntilMsgSent: true
+            });
+            if (!sent) throw new Error('WhatsApp returned no sent message');
+            await db.setWa(businessId, 'CONNECTED', 'Order held because product matching was ambiguous.', null).catch(() => {});
+            return;
+          }
+          throw e;
+        }
 
         await db.setWa(businessId, 'CONNECTED', 'Last order received: #' + order.id + ' from ' + senderPhone, null).catch(() => {});
 
