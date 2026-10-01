@@ -291,9 +291,10 @@ function parseBill(text){
     // Retail OCR often prints GST as "(18)" or "(13.8)" instead of "18%".
     const parenthesizedRates=[...tail.matchAll(/\(\s*(\d+(?:\.\d+)?)\s*%?\s*\)/g)].map(m=>num(m[1]));
     for(const x of parenthesizedRates)if(x>0&&x<=100)percentages.push(x);
+    const numericTail=tail.replace(/\(\s*\d+(?:\.\d+)?\s*%?\s*\)/g,' ');
     const tokenRe=/(\d[\d,]*(?:\.\d+)?|\d+(?:\.\d+)?\s*%)/g;
     let tm;
-    while((tm=tokenRe.exec(tail))){
+    while((tm=tokenRe.exec(numericTail))){
       const raw=tm[1].trim();
       if(/%$/.test(raw))percentages.push(num(raw.replace('%','')));
       else nums.push(num(raw));
