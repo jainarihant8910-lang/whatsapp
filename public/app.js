@@ -28,7 +28,38 @@ async function manageAliases(id,name){
  $('aliasForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/items/'+id+'/aliases',{method:'POST',body:{alias:new FormData(e.target).get('alias')}});manageAliases(id,name)}catch(x){toast(x.message,true)}};
 }
 async function deleteAlias(aliasId,itemId,name){try{await api('/api/item-aliases/'+aliasId,{method:'DELETE'});manageAliases(itemId,name)}catch(e){toast(e.message,true)}}
-async function openProduct(){const hm=await api('/api/hsn');modal('Add product',`<form id='productForm' class='formgrid'><label>Name<input name='name' required></label><label>SKU<input name='sku' placeholder='Leave blank to auto-generate'></label><label>HSN/SAC<select name='hsn_code' id='productHsn'><option value=''>Select from HSN master (or leave blank)</option></select></label><label>Unit<input name='unit' value='PCS'></label><label>Opening stock<input name='opening_stock' type='number' min='0' value='0'></label><label>Minimum stock<input name='minimum_stock' type='number' min='0' value='0'></label><label>Purchase price<input name='purchase_price' type='number' min='0' step='0.01'></label><label>Selling price<input name='selling_price' type='number' min='0' step='0.01'></label><label>GST %<input name='gst_rate' type='number' min='0' step='0.01'></label><button class='primary'>Save product</button></form>`);const hs=$('productHsn');(hm.hsn||[]).forEach(x=>{const o=document.createElement('option');o.value=x.code;o.textContent=x.code+' — '+x.description+' ('+n(x.gst_rate)+'%)';hs.appendChild(o)});$('productForm').onsubmit=async e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target));await api('/api/items',{method:'POST',body:d});$('modal').classList.add('hidden');toast('Product saved');productsPage()}}
+async async function openProduct(){
+ const hm=await api('/api/hsn');
+ modal('Add product',`<form id='productForm' class='formgrid'>
+ <label class='wide'>Product name <span class='muted'>Search classification ↗</span><div class='inputrow'><input id='productName' name='name' required placeholder='e.g. A4 paper, cutting machine, mobile phone'><button type='button' title='Search product classification' onclick='searchProductClassification()'>🔍</button></div></label>
+ <label>Product group/category<input id='productCategory' name='category' placeholder='Auto-filled from classification'></label>
+ <label>SKU<input id='productSku' name='sku' placeholder='Leave blank to auto-generate'></label>
+ <label>HSN/SAC<div class='inputrow'><select name='hsn_code' id='productHsn'><option value=''>Select from HSN master</option></select><button type='button' title='Search HSN / GST' onclick='searchProductClassification()'>🔍</button></div></label>
+ <label>GST %<input id='productGst' name='gst_rate' type='number' min='0' step='0.01' placeholder='Auto-filled'></label>
+ <label>Unit<input name='unit' value='PCS'></label><label>Opening stock<input name='opening_stock' type='number' min='0' value='0'></label><label>Minimum stock<input name='minimum_stock' type='number' min='0' value='0'></label><label>Purchase price<input name='purchase_price' type='number' min='0' step='0.01'></label><label>Selling price<input name='selling_price' type='number' min='0' step='0.01'></label><button class='primary'>Save product</button></form>`);
+ const hs=$('productHsn');(hm.hsn||[]).forEach(x=>{const o=document.createElement('option');o.value=x.code;o.textContent=x.code+' — '+x.description+' ('+n(x.gst_rate)+'%)';hs.appendChild(o)});
+ $('productForm').onsubmit=async e=>{e.preventDefault();try{const d=Object.fromEntries(new FormData(e.target));await api('/api/items',{method:'POST',body:d});$('modal').classList.add('hidden');toast('Product saved');productsPage()}catch(x){toast(x.message,true)}}
+}
+async function searchProductClassification(){
+ const q=String($('productName')?.value||'').trim();
+ if(q.length<2){toast('Enter at least 2 characters of the product name.',true);return}
+ try{
+  toast('Searching HSN / product classification…');
+  const d=await api('/api/hsn/search?q='+encodeURIComponent(q));
+  const rows=d.results||[];
+  if(!rows.length){toast('No classification found. You can enter HSN, SKU and GST manually.',true);return}
+  modal('Select product classification',`<p class='muted'>Choose the closest match. HSN/GST classification should be verified for the actual product before invoicing.</p><div class='tablewrap'><table><thead><tr><th>HSN</th><th>Group</th><th>Description</th><th>GST</th><th></th></tr></thead><tbody>${rows.map((x,i)=>`<tr><td><b>${esc(x.hsn_code)}</b></td><td>${esc(x.category||'—')}</td><td>${esc(x.description)}</td><td>${n(x.gst_rate)}%</td><td><button type='button' onclick='applyClassification(${JSON.stringify(x).replace(/</g,'&lt;')})'>Use</button></td></tr>`).join('')}</tbody></table></div>`);
+ }catch(e){toast(e.message,true)}
+}
+function applyClassification(x){
+ const set=(id,v)=>{const el=$(id);if(el)el.value=v??''};
+ set('productHsn',x.hsn_code);set('productGst',x.gst_rate||0);set('productCategory',x.category||x.description||'');
+ const name=String($('productName')?.value||'').trim();
+ if(name && !String($('productSku')?.value||'').trim())set('productSku',makeLocalSku(name,x.hsn_code));
+ $('modal').classList.add('hidden');
+ toast('HSN, GST, group and SKU filled from classification');
+}
+function makeLocalSku(name,hsn){const words=String(name).toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim().split(/\\s+/).filter(Boolean);const prefix=words.slice(0,3).map(x=>x.slice(0,3)).join('');return (prefix||'PRD')+'-'+String(hsn||'').replace(/\\D/g,'').slice(-4)+'-'+Date.now().toString().slice(-4)}
 async function stockIn(id){const q=prompt('Quantity to add');if(q===null)return;try{await api('/api/items/'+id+'/stock',{method:'POST',body:{quantity:Number(q),reason:'Manual stock addition'}});toast('Stock added');productsPage()}catch(e){toast(e.message,true)}}
 async function deleteProduct(id,name){if(!confirm('Delete "'+name+'" from Products? This is allowed only when stock is zero. Historical orders and stock history are kept.'))return;try{await api('/api/items/'+id,{method:'DELETE'});toast('Product deleted');productsPage()}catch(e){toast(e.message,true)}}
 async function ordersPage(){
