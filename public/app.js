@@ -37,11 +37,12 @@ async function openProduct(prefill={}){
  <label>HSN/SAC<div class='inputrow'><select name='hsn_code' id='productHsn'><option value=''>Select from HSN master</option></select><button type='button' title='Search HSN / GST' onclick='searchProductClassification()'>🔍</button></div></label>
  <label>GST %<input id='productGst' name='gst_rate' type='number' min='0' step='0.01' value='${esc(prefill.gst_rate??'')}' placeholder='Auto-filled'></label>
  <label>Unit<input name='unit' value='PCS'></label><label>Opening stock<input name='opening_stock' type='number' min='0' value='0'></label><label>Minimum stock<input name='minimum_stock' type='number' min='0' value='0'></label><label>Purchase price<input name='purchase_price' type='number' min='0' step='0.01'></label><label>Selling price<input name='selling_price' type='number' min='0' step='0.01'></label><button class='primary'>Save product</button></form>`);
- const hs=$('productHsn');(hm.hsn||[]).forEach(x=>{const o=document.createElement('option');o.value=x.code;o.textContent=x.code+' — '+x.description+' ('+n(x.gst_rate)+'%)';hs.appendChild(o)});
+ const hs=$('productHsn');(hm.hsn||[]).forEach(x=>{const o=document.createElement('option');o.value=x.code;o.textContent=x.code+' — '+x.description+' ('+n(x.gst_rate)+'%)';hs.appendChild(o)}); if(prefill.hsn_code)hs.value=String(prefill.hsn_code);
  $('productForm').onsubmit=async e=>{e.preventDefault();try{const d=Object.fromEntries(new FormData(e.target));await api('/api/items',{method:'POST',body:d});$('modal').classList.add('hidden');toast('Product saved');productsPage()}catch(x){toast(x.message,true)}}
 }
 async function searchProductClassification(){
  const q=String($('productName')?.value||'').trim();
+ window.pendingProductName=q;
  if(q.length<2){toast('Enter at least 2 characters of the product name.',true);return}
  try{
   toast('Searching HSN / product classification…');
@@ -52,7 +53,7 @@ async function searchProductClassification(){
  }catch(e){toast(e.message,true)}
 }
 function applyClassification(x){
- const name=String($('productName')?.value||'').trim();
+ const name=String(window.pendingProductName||'').trim();
  const sku=String($('productSku')?.value||'').trim()||makeLocalSku(name,x.hsn_code);
  $('modal').classList.add('hidden');
  openProduct({name,category:x.category||x.description||'',sku,hsn_code:x.hsn_code,gst_rate:x.gst_rate||0});
