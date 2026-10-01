@@ -31,7 +31,7 @@ async function deleteAlias(aliasId,itemId,name){try{await api('/api/item-aliases
 async function openProduct(prefill={}){
  const hm=await api('/api/hsn');
  modal('Add product',`<form id='productForm' class='formgrid'>
- <label class='wide'>Product name <span class='muted'>Search classification ↗</span><div class='inputrow'><input id='productName' name='name' required value='${esc(prefill.name||'')}' placeholder='e.g. A4 paper, cutting machine, mobile phone'><button type='button' title='Search product classification' onclick='searchProductClassification()'>🔍</button></div></label>
+ <label class='wide'>Product name <span class='muted'>Search by category ↗</span><div class='inputrow'><input id='productName' name='name' required value='${esc(prefill.name||'')}' placeholder='e.g. A4 paper, cutting machine, mobile phone'><button type='button' title='Search product classification' onclick='searchProductClassification()'>🔍</button></div></label>
  <label>Product group/category<input id='productCategory' name='category' value='${esc(prefill.category||'')}' placeholder='Auto-filled from classification'></label>
  <label>SKU<input id='productSku' name='sku' value='${esc(prefill.sku||'')}' placeholder='Leave blank to auto-generate'></label>
  <label>HSN/SAC<div class='inputrow'><select name='hsn_code' id='productHsn'><option value=''>Select from HSN master</option></select><button type='button' title='Search HSN / GST' onclick='searchProductClassification()'>🔍</button></div></label>
@@ -43,10 +43,10 @@ async function openProduct(prefill={}){
 async function searchProductClassification(){
  const draftForm=$('productForm');
  const draft=draftForm?Object.fromEntries(new FormData(draftForm)):{};
- const q=String(draft.name||$('productName')?.value||'').trim();
- window.pendingProductDraft={...draft,name:q};
+ const q=String(draft.category||$('productCategory')?.value||'').trim();
+ window.pendingProductDraft={...draft,searchCategory:q};
  window.pendingProductName=q;
- if(q.length<2){toast('Enter at least 2 characters of the product name.',true);return}
+ if(q.length<2){toast('Enter at least 2 characters of the product category.',true);return}
  try{
   toast('Searching HSN / product classification…');
   const d=await api('/api/hsn/search?q='+encodeURIComponent(q));
@@ -62,7 +62,8 @@ async function applyClassification(x){
  const prefill={...draft,name,category:x.category||draft.category||x.description||'',sku,hsn_code:x.hsn_code,gst_rate:x.gst_rate??draft.gst_rate??0};
  $('modal').classList.add('hidden');
  await openProduct(prefill);
- const hs=$('productHsn');if(hs)hs.value=String(x.hsn_code||'');
+ const hs=$('productHsn');
+ if(hs&&x.hsn_code){let opt=[...hs.options].find(o=>String(o.value)===String(x.hsn_code));if(!opt){opt=document.createElement('option');opt.value=String(x.hsn_code);opt.textContent=String(x.hsn_code)+' — '+String(x.description||'')+' ('+n(x.gst_rate)+'%)';hs.appendChild(opt)}hs.value=String(x.hsn_code)}
  toast('HSN, GST, group and SKU filled from classification');
 }
 function makeLocalSku(name,hsn){const words=String(name).toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim().split(/\\s+/).filter(Boolean);const prefix=words.slice(0,3).map(x=>x.slice(0,3)).join('');return (prefix||'PRD')+'-'+String(hsn||'').replace(/\\D/g,'').slice(-4)+'-'+Date.now().toString().slice(-4)}
