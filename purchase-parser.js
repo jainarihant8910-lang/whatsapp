@@ -387,10 +387,20 @@ function parseBill(text){
 
   // Final safety pass: every OCR strategy above can create a candidate independently.
   // Remove footer/summary candidates here as the last line of defense.
-  const footerWords=/^(?:total|subtotal|grand total|bill amount|invoice amount|total amount|amount after tax|amount due|net amount|taxable amount|total tax|tax amount|cgst|sgst|igst|cess|round off|rounding|discount|balance due|paid amount|payment|amount in words|terms and conditions|bank details)\\b/i;
+  const footerWords=/^(?:total|subtotal|grand total|bill amount|invoice amount|total amount|amount after tax|amount due|net amount|taxable amount|total tax|tax amount|cgst|sgst|igst|cess|round off|rounding|discount|balance due|paid amount|payment|amount in words|terms and conditions|bank details)\b/i;
+  const closeMoney=(a,b)=>Number.isFinite(Number(a))&&Number.isFinite(Number(b))&&Math.abs(Number(a)-Number(b))<=0.05;
   for(let i=items.length-1;i>=0;i--){
-    const n=String(items[i].name||'').replace(/[^a-z0-9%]+/gi,' ').trim();
-    if(footerWords.test(n)||/^(?:rs|inr|rupees)?\\s*[\\d,]+(?:\\.\\d+)?(?:\\s+(?:only|rupees))?$/i.test(n))items.splice(i,1);
+    const item=items[i];
+    const n=String(item.name||'').replace(/[^a-z0-9%]+/gi,' ').trim();
+    const numericOnly=/^(?:rs|inr|rupees)?\s*[\d,]+(?:\.\d+)?(?:\s+(?:only|rupees))?$/i.test(n);
+    const namedFooter=footerWords.test(n);
+    const summaryDuplicate=items.length>1 && invoiceTotal>0 && closeMoney(item.line_total,invoiceTotal) && (
+      (taxableTotal>0 && closeMoney(item.taxable_value,taxableTotal)) ||
+      (taxTotal>0 && closeMoney(item.tax_amount,taxTotal)) ||
+      (summaryTaxTotal>0 && closeMoney(item.tax_amount,summaryTaxTotal)) ||
+      (item.quantity===1 && closeMoney(item.purchase_price,invoiceTotal))
+    );
+    if(namedFooter||numericOnly||summaryDuplicate)items.splice(i,1);
   }
 
   const itemTaxableTotal=money(items.reduce((s,x)=>s+Number(x.taxable_value||0),0));
