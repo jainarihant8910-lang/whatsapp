@@ -31,8 +31,8 @@ async function deleteAlias(aliasId,itemId,name){try{await api('/api/item-aliases
 async function openProduct(prefill={}){
  const hm=await api('/api/hsn');
  modal('Add product',`<form id='productForm' class='formgrid'>
- <label class='wide'>Product name <span class='muted'>Search by category ↗</span><div class='inputrow'><input id='productName' name='name' required value='${esc(prefill.name||'')}' placeholder='e.g. A4 paper, cutting machine, mobile phone'><button type='button' title='Search product classification' onclick='searchProductClassification()'>🔍</button></div></label>
- <label>Product group/category<input id='productCategory' name='category' value='${esc(prefill.category||'')}' placeholder='Auto-filled from classification'></label>
+ <label class='wide'>Product name<input id='productName' name='name' required value='${esc(prefill.name||'')}' placeholder='e.g. A4 paper, cutting machine, mobile phone'></label>
+ <label>Product group/category<div class='inputrow'><input id='productCategory' name='category' value='${esc(prefill.category||'')}' placeholder='e.g. laptops, stationery, mobile phones'><button type='button' title='Search HSN by product category' onclick='searchProductClassification()'>🔍</button></div></label>
  <label>SKU<input id='productSku' name='sku' value='${esc(prefill.sku||'')}' placeholder='Leave blank to auto-generate'></label>
  <label>HSN/SAC<div class='inputrow'><select name='hsn_code' id='productHsn'><option value=''>Select from HSN master</option></select><button type='button' title='Search HSN / GST' onclick='searchProductClassification()'>🔍</button></div></label>
  <label>GST %<input id='productGst' name='gst_rate' type='number' min='0' step='0.01' value='${esc(prefill.gst_rate??'')}' placeholder='Auto-filled'></label>
