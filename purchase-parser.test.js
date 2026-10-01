@@ -127,3 +127,36 @@ assert.equal(loose.invoice_total,4012);
   assert.strictEqual(fp.items.length,2,'invoice/bill totals must never become products');
   assert.deepStrictEqual(fp.items.map(x=>x.name),['Bosch Drill Machine','Taparia Screwdriver Set']);
 }
+
+{
+  // Regression from gst-bill-format.png: the invoice has 8 real products,
+  // subtotal 32898, GST 5127.84, and final amount 38026.00. OCR may turn
+  // the bottom summary into a ninth numbered row.
+  const imageBill=[
+    'TAX INVOICE',
+    '1 Best Ball Pen 1495 2 Nos 10.00 20.00 12 2.40 22.40',
+    '2 Executive Diary 1256 8 Box 590.00 4720.00 12 566.40 5,286.40',
+    '3 Leather Portfolio Folder 1258 2 Box 630.00 1260.00 12 151.20 1,411.20',
+    '4 Wireless Mouse 4589 9 Nos 520.00 4680.00 18 842.40 5,522.40',
+    '5 A4 Document File 4587 5 Pkt 420.00 2100.00 12 252.00 2,352.00',
+    '6 Power Bank 10000mAh 1248 9 Nos 570.00 5130.00 12 615.60 5,745.60',
+    '7 USB Flash Drive 1256 12 Pkt 999.00 11988.00 18 2157.84 14,145.84',
+    '8 Bluetooth Keyboard 2536 4 Box 750.00 3000.00 18 540.00 3,540.00',
+    '9 Total Amount 38026.00 1 PCS 38026.00 38026.00 0 0 38026.00',
+    'CGST Amt: 2563.92',
+    'SGST Amt: 2563.92',
+    'Sub-Total: 32898 38025.84',
+    'Total Amount: 38026.00'
+  ].join(String.fromCharCode(10));
+  const p=parseBill(imageBill);
+  assert.strictEqual(p.items.length,8,'bill total must not become a ninth product');
+  assert.deepStrictEqual(p.items.map(x=>x.name),[
+    'Best Ball Pen','Executive Diary','Leather Portfolio Folder','Wireless Mouse',
+    'A4 Document File','Power Bank 10000mAh','USB Flash Drive','Bluetooth Keyboard'
+  ]);
+  assert.strictEqual(p.taxable_total,32898);
+  assert.strictEqual(p.tax_total,5127.84);
+  assert.strictEqual(p.cgst,2563.92);
+  assert.strictEqual(p.sgst,2563.92);
+  assert.strictEqual(p.invoice_total,38026);
+}
