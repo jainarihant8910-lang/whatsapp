@@ -9,9 +9,9 @@ $('registerForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/auth
 $('logout').onclick=async()=>{try{await api('/api/auth/logout',{method:'POST'})}catch{}localStorage.removeItem('dm_csrf');showLogin()}; $('refresh').onclick=()=>load(); $('menu').onclick=()=>document.body.classList.toggle('open');
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page)); $('closeModal').onclick=()=>$('modal').classList.add('hidden');
 async function go(p){page=p;document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===p));$('title').textContent=p[0].toUpperCase()+p.slice(1);$('subtitle').textContent=p==='dashboard'?'Business overview':'Manage '+p;document.body.classList.remove('open');await load()}
-async function load(){try{if(page==='dashboard')return dashboard();if(page==='orders')return ordersPage();if(page==='products')return productsPage();if(page==='customers')return customersPage();if(page==='senders')return sendersPage();if(page==='invoices')return invoicesPage();if(page==='purchases')return purchasesPage();if(page==='transactions')return transactionsPage();if(page==='whatsapp')return whatsappPage();if(page==='settings')return settingsPage()}catch(e){toast(e.message,true)}}
+async function load(){try{if(page==='dashboard')return dashboard();if(page==='orders')return ordersPage();if(page==='products')return productsPage();if(page==='customers')return customersPage();if(page==='senders')return sendersPage();if(page==='invoices')return invoicesPage();if(page==='transactions')return transactionsPage();if(page==='whatsapp')return whatsappPage();if(page==='settings')return settingsPage()}catch(e){toast(e.message,true)}}
 function card(title,value,sub){return `<div class='card'><small>${esc(title)}</small><strong>${esc(value)}</strong><span>${esc(sub||'')}</span></div>`}
-async function dashboard(){const d=await api('/api/dashboard');const p=await api('/api/items');items=p.items||[];$('page').innerHTML=`<div class='grid stats'>${card('Today orders',d.todayOrders,'WhatsApp + manual')}${card('All orders',d.orders,'Recorded deliveries')}${card('Products',d.products,'Inventory master')}${card('Low stock',d.lowStock,'Needs attention')}${card('Pending orders',d.pending,'Confirmation pending')}${card('Invoices',d.invoices,'Draft + finalized')}${card('Purchase bills',d.purchases,'Uploaded bills')}${card('Stock value','₹'+n(d.stockValue),'At purchase price')}</div><div class='grid two'><section class='panel'><h3>Quick actions</h3><div class='actions'><button class='primary' onclick="openProduct()">+ Product</button><button onclick="openCustomer()">+ Customer</button><button onclick="openInvoice()">+ Invoice</button><button onclick="go('purchases')">📥 Purchase bill</button></div></section><section class='panel'><h3>Low stock</h3>${items.filter(x=>x.low_stock).slice(0,8).map(x=>`<div class='row'><span>${esc(x.name)}</span><b>${n(x.current_stock)} / min ${n(x.minimum_stock)}</b></div>`).join('')||'<div class="muted">No low-stock products.</div>'}</section></div>`}
+async function dashboard(){const d=await api('/api/dashboard');const p=await api('/api/items');items=p.items||[];$('page').innerHTML=`<div class='grid stats'>${card('Today orders',d.todayOrders,'WhatsApp + manual')}${card('All orders',d.orders,'Recorded deliveries')}${card('Products',d.products,'Inventory master')}${card('Low stock',d.lowStock,'Needs attention')}${card('Pending orders',d.pending,'Confirmation pending')}${card('Invoices',d.invoices,'Draft + finalized')}${card('Stock value','₹'+n(d.stockValue),'At purchase price')}</div><div class='grid two'><section class='panel'><h3>Quick actions</h3><div class='actions'><button class='primary' onclick="openProduct()">+ Product</button><button onclick="openCustomer()">+ Customer</button><button onclick="openInvoice()">+ Invoice</button></div></section><section class='panel'><h3>Low stock</h3>${items.filter(x=>x.low_stock).slice(0,8).map(x=>`<div class='row'><span>${esc(x.name)}</span><b>${n(x.current_stock)} / min ${n(x.minimum_stock)}</b></div>`).join('')||'<div class="muted">No low-stock products.</div>'}</section></div>`}
 async function productsPage(){const d=await api('/api/items');items=d.items||[];$('page').innerHTML=`<div class='bar'><div><h3>Products & stock</h3><p class='muted'>Selling price, GST, HSN and inventory.</p></div><button class='primary' onclick="openProduct()">+ Add product</button></div><div class='panel tablewrap'><table><thead><tr><th>Product</th><th>SKU</th><th>HSN</th><th>Stock</th><th>Buy</th><th>Sell</th><th>GST</th><th></th></tr></thead><tbody>${items.map(x=>`<tr><td><b>${esc(x.name)}</b><small>${esc(x.unit)}</small></td><td>${esc(x.sku)}</td><td>${esc(x.hsn_code)}</td><td>${n(x.current_stock)} ${x.low_stock?'⚠️':''}</td><td>₹${n(x.purchase_price)}</td><td>₹${n(x.selling_price)}</td><td>${n(x.gst_rate)}%</td><td><button onclick='stockIn(${x.id})'>+ Stock</button>${Number(x.current_stock)===0?`<button class='danger' onclick='deleteProduct(${x.id},${JSON.stringify(x.name)})'>Delete</button>`:''}</td></tr>`).join('')}</tbody></table></div>`}
 function openProduct(){modal('Add product',`<form id='productForm' class='formgrid'><label>Name<input name='name' required></label><label>SKU<input name='sku'></label><label>HSN/SAC<input name='hsn_code'></label><label>Unit<input name='unit' value='PCS'></label><label>Opening stock<input name='opening_stock' type='number' min='0' value='0'></label><label>Minimum stock<input name='minimum_stock' type='number' min='0' value='0'></label><label>Purchase price<input name='purchase_price' type='number' min='0' step='0.01'></label><label>Selling price<input name='selling_price' type='number' min='0' step='0.01'></label><label>GST %<input name='gst_rate' type='number' min='0' step='0.01'></label><button class='primary'>Save product</button></form>`);$('productForm').onsubmit=async e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target));await api('/api/items',{method:'POST',body:d});$('modal').classList.add('hidden');toast('Product saved');productsPage()}}
 async function stockIn(id){const q=prompt('Quantity to add');if(q===null)return;try{await api('/api/items/'+id+'/stock',{method:'POST',body:{quantity:Number(q),reason:'Manual stock addition'}});toast('Stock added');productsPage()}catch(e){toast(e.message,true)}}
@@ -66,64 +66,6 @@ async function invoicesPage(){const [d,ip,cp]=await Promise.all([api('/api/invoi
 function openInvoice(){if(!items.length||!customers.length){toast('Add at least one product and one customer first.',true);return}modal('Create invoice',`<form id='invoiceForm'><label>Customer<select name='customer_id' required>${customers.map(c=>`<option value='${c.id}'>${esc(c.name)} ${esc(c.gstin)}</option>`).join('')}</select></label><label>Date<input type='date' name='invoice_date' value='${new Date().toISOString().slice(0,10)}'></label><div id='invoiceRows'></div><button type='button' onclick='addInvoiceRow()'>+ Add line</button><button class='primary'>Create draft</button></form>`);addInvoiceRow();$('invoiceForm').onsubmit=async e=>{e.preventDefault();const rows=[...document.querySelectorAll('.invrow')].map(r=>({item_id:Number(r.querySelector('select').value),quantity:Number(r.querySelector('input').value)}));await api('/api/invoices',{method:'POST',body:{customer_id:Number(e.target.customer_id.value),invoice_date:e.target.invoice_date.value,items:rows}});$('modal').classList.add('hidden');toast('Draft invoice created');invoicesPage()}}
 function addInvoiceRow(){const x=document.createElement('div');x.className='invrow';x.innerHTML=`<select>${items.map(p=>`<option value='${p.id}'>${esc(p.name)} — ₹${n(p.selling_price)}</option>`).join('')}</select><input type='number' min='0.01' step='0.01' value='1'><button type='button' onclick='this.parentElement.remove()'>×</button>`;$('invoiceRows').appendChild(x)}
 async function finalizeInv(id){if(!confirm('Finalize invoice and deduct stock?'))return;try{await api('/api/invoices/'+id+'/finalize',{method:'POST'});toast('Invoice finalized');invoicesPage()}catch(e){toast(e.message,true)}} async function cancelInv(id){if(!confirm('Cancel this invoice? Finalized invoices reverse their stock movement.'))return;try{await api('/api/invoices/'+id+'/cancel',{method:'POST'});toast('Invoice cancelled');invoicesPage()}catch(e){toast(e.message,true)}}
-async function prepareBillFile(file){
-  if(!file||!file.type.startsWith('image/'))return file;
-  // OCR.space's current free API has a 1 MB upload limit. Camera photos are
-  // commonly larger, so resize/compress only the upload copy in the browser.
-  if(file.size<=900*1024)return file;
-  const bitmap=await createImageBitmap(file);
-  const maxSide=2200;
-  const scale=Math.min(1,maxSide/Math.max(bitmap.width,bitmap.height));
-  const canvas=document.createElement('canvas');
-  canvas.width=Math.max(1,Math.round(bitmap.width*scale));
-  canvas.height=Math.max(1,Math.round(bitmap.height*scale));
-  canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);
-  bitmap.close();
-  for(const quality of [0.82,0.72,0.62,0.52,0.42]){
-    const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));
-    if(blob&&blob.size<=900*1024){
-      return new File([blob],String(file.name||'bill.jpg').replace(/\.[^.]+$/i,'.jpg'),{type:'image/jpeg',lastModified:Date.now()});
-    }
-  }
-  const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.35));
-  if(blob)return new File([blob],String(file.name||'bill.jpg').replace(/\.[^.]+$/i,'.jpg'),{type:'image/jpeg',lastModified:Date.now()});
-  return file;
-}
-
-async function purchasesPage(){
-  const d=await api('/api/purchases');
-  $('page').innerHTML=`<div class='bar'><div><h3>Purchase bills</h3><p class='muted'>Upload the supplier bill. The system extracts seller/buyer IDs, HSN, SKU, quantity, rate, GST and totals, then updates stock automatically when imported.</p></div><label class='upload primary'>📥 Upload bill<input id='bill' type='file' accept='.pdf,.jpg,.jpeg,.png,.webp' hidden></label></div>
-  <div class='panel tablewrap'><table><thead><tr><th>Bill</th><th>Seller</th><th>Seller ID</th><th>Invoice</th><th>Buying amount</th><th>Status</th></tr></thead><tbody>${(d.purchases||[]).map(x=>`<tr><td>${esc(x.original_filename)}</td><td>${esc(x.supplier_name)}</td><td>${esc(x.seller_id)}</td><td>${esc(x.invoice_number)}</td><td>₹${n(x.invoice_total)}</td><td>${esc(x.status)}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">No purchase bills yet.</td></tr>'}</tbody></table></div>`;
-  $('bill').onchange=uploadBill;
-}
-async function uploadBill(e){
-  const f=e.target.files[0]; if(!f)return;
-  try{
-    const uploadFile=await prepareBillFile(f);
-    const fd=new FormData(); fd.append('bill',uploadFile,uploadFile.name);
-    const d=await api('/api/purchases/extract',{method:'POST',body:fd}); const p=d.purchase;
-    modal('Purchase bill extracted',`
-      <div class='grid two'>
-        <div><b>Seller:</b> ${esc(p.supplier_name||'-')}<br><b>Seller ID:</b> ${esc(p.seller_id||'-')}<br><b>Seller GSTIN:</b> ${esc(p.supplier_gstin||'-')}<br><b>Seller PAN:</b> ${esc(p.seller_pan||'-')}<br><b>Seller phone:</b> ${esc(p.seller_phone||'-')}<br><b>Seller address:</b> ${esc(p.seller_address||'-')}</div>
-        <div><b>Purchaser:</b> ${esc(p.buyer_name||'-')}<br><b>Purchaser ID:</b> ${esc(p.buyer_id||'-')}<br><b>Purchaser GSTIN:</b> ${esc(p.buyer_gstin||'-')}<br><b>Purchaser PAN:</b> ${esc(p.buyer_pan||'-')}<br><b>Purchaser address:</b> ${esc(p.buyer_address||'-')}<br><b>Invoice:</b> ${esc(p.invoice_number||'-')}<br><b>Date:</b> ${esc(p.invoice_date||'-')}<br><b>Payment:</b> ${esc(p.payment_method||'-')}<br><b>Reverse charge:</b> ${esc(p.reverse_charge||'-')}</div>      </div>
-      <div class='tablewrap'><table><thead><tr><th>Product</th><th>SKU</th><th>HSN</th><th>Qty</th><th>Unit</th><th>Buying rate</th><th>GST</th><th>Line total</th></tr></thead><tbody>
-      ${(p.items||[]).map(x=>`<tr><td>${esc(x.extracted_name)}</td><td>${esc(x.sku||'-')}</td><td>${esc(x.hsn_code||'-')}</td><td>${n(x.quantity)}</td><td>${esc(x.unit)}</td><td>₹${n(x.purchase_price)}</td><td>${n(x.gst_rate)}%</td><td>₹${n(x.line_total)}</td></tr>`).join('')}
-      </tbody></table></div>
-      <div class='grid stats'>
-        <div class='card'><small>Taxable amount</small><strong>₹${n(p.taxable_total)}</strong></div>
-        <div class='card'><small>CGST / SGST</small><strong>₹${n(p.cgst)} / ₹${n(p.sgst)}</strong></div>
-        <div class='card'><small>Total tax</small><strong>₹${n(p.tax_total)}</strong></div>
-        <div class='card'><small>Round off</small><strong>₹${n(p.round_off)}</strong></div>
-        <div class='card'><small>Buying amount</small><strong>₹${n(p.invoice_total)}</strong></div>
-      </div>
-      <p class='muted'>No HSN, SKU or stock quantity needs to be typed manually. Existing products are matched automatically; missing products are created automatically with an SKU generated from the bill.</p>
-      <button id='confirmPurchase' class='primary'>Import bill & update stock</button>`);
-    $('confirmPurchase').onclick=async()=>{
-      await api('/api/purchases/'+p.id+'/confirm',{method:'POST',body:{items:(p.items||[]).map(x=>({id:x.id,name:x.extracted_name,sku:x.sku,supplier_sku:x.supplier_sku,quantity:x.quantity,unit:x.unit,purchase_price:x.purchase_price,gst_rate:x.gst_rate,hsn_code:x.hsn_code,item_id:x.matched_item_id}))}});
-      $('modal').classList.add('hidden'); toast('Purchase imported. Products and stock updated automatically.'); purchasesPage();
-    };
-  }catch(x){toast(x.message,true)}
-}
 async function transactionsPage(){const d=await api('/api/transactions');$('page').innerHTML=`<div class='bar'><h3>Stock history</h3></div><div class='panel tablewrap'><table><thead><tr><th>Date</th><th>Product</th><th>Type</th><th>Qty</th><th>Reason</th></tr></thead><tbody>${(d.transactions||[]).map(x=>`<tr><td>${esc(x.created_at)}</td><td>${esc(x.item_name)}</td><td>${esc(x.type)}</td><td>${n(x.quantity)}</td><td>${esc(x.reason)}</td></tr>`).join('')}</tbody></table></div>`}
 async function whatsappPage(){
   if(waTimer)clearInterval(waTimer);
