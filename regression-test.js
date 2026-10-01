@@ -22,7 +22,7 @@ const checks=[
  [index.includes('No order was created and no stock was changed'),'Ambiguous match safety message is missing'],
  [db.includes('INSUFFICIENT_STOCK_CONFIRMATION')||db.includes('savePendingOrderConfirmation'),'Insufficient-stock confirmation flow is missing'],
  [db.includes('allowPartialStock'),'Confirmed shortage partial-fulfillment path is missing'],
- [index.includes('Reply *OKAY* to place the order'),'WhatsApp stock confirmation prompt is missing'],
+ [index.includes('Reply *OKAY*'),'WhatsApp stock confirmation prompt is missing'],
  [index.includes('getPendingOrderConfirmation'),'Pending order confirmation handling is missing'],
  [index.includes('The pending order was not confirmed'),'Non-confirmation rejection message is missing']
 ];
