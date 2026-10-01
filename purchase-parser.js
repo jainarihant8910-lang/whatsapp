@@ -288,6 +288,9 @@ function parseBill(text){
     if(!name||name.length<2||/^(?:sr\.?\s*no|product|description|item|name)$/i.test(name))return false;
     const nums=[];
     const percentages=[];
+    // Retail OCR often prints GST as "(18)" or "(13.8)" instead of "18%".
+    const parenthesizedRates=[...tail.matchAll(/\(\s*(\d+(?:\.\d+)?)\s*%?\s*\)/g)].map(m=>num(m[1]));
+    for(const x of parenthesizedRates)if(x>0&&x<=100)percentages.push(x);
     const tokenRe=/(\d[\d,]*(?:\.\d+)?|\d+(?:\.\d+)?\s*%)/g;
     let tm;
     while((tm=tokenRe.exec(tail))){
@@ -297,6 +300,18 @@ function parseBill(text){
     }
     if(nums.length<2)return false;
     const total=nums[nums.length-1];
+    const hasParenthesizedGst=parenthesizedRates.length>0;
+    if(hasParenthesizedGst && nums.length>=3){
+      // Retail layout: MRP, rate, tax, (GST%), total.
+      // The actual taxable/rate is total minus the tax amount.
+      const taxCandidate=nums[nums.length-2];
+      const derivedTaxable=money(total-taxCandidate);
+      if(derivedTaxable>0){
+        rate=money(derivedTaxable/q);
+        taxable=derivedTaxable;
+        taxAmount=taxCandidate;
+      }
+    }
     const firstPercentIndex=tail.search(/\d+(?:\.\d+)?\s*%/);
     const beforeGst=firstPercentIndex>=0
       ? [...tail.slice(0,firstPercentIndex).matchAll(/\d[\d,]*(?:\.\d+)?/g)].map(m=>num(m[0]))
