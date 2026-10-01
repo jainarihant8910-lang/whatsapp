@@ -45,7 +45,9 @@ function parseBill(text){
   const transportId=find(/Transport\s*ID\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
   const pos=find(/Place\s*of\s*Supply\s*[:\-]?\s*(.+?)(?=\s+Invoice\s*No|$)/i);
   const invoiceTotal=amountAfter(/(?:Total Amount After Tax|Total Amount)\b/i);
-  const taxableTotal=amountAfter(/^(?:Taxable Amount|Sub[- ]?Total)\b/i);
+  // Prefer an explicitly labelled Taxable Amount over Sub-Total.
+  // Retail invoices may show Sub Total as the final bill amount including tax.
+  const taxableTotal=amountAfter(/^Taxable Amount\b/i)||amountAfter(/^Taxable Value\b/i)||amountAfter(/^Sub[- ]?Total\b/i);
   const taxTotal=amountAfter(/^Total Tax\b/i);
   const roundOff=amountAfter(/^Round(?:ing)?\s*Off\b/i);
   // GST is often printed in the lower summary section as:
