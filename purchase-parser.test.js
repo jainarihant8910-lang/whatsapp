@@ -110,3 +110,20 @@ assert.equal(loose.cgst,306);
 assert.equal(loose.sgst,306);
 assert.equal(loose.tax_total,612);
 assert.equal(loose.invoice_total,4012);
+
+
+{
+  // OCR can turn the invoice footer total into a fake numbered product row.
+  const footerAsRow=[
+    'TAX INVOICE',
+    '1 Bosch Drill Machine 8207 2 PCS 1,250.00 2,500.00 18 450.00 2,950.00',
+    '2 Taparia Screwdriver Set 8205 3 PCS 300.00 900.00 18 162.00 1,062.00',
+    '3 Total Amount After Tax 4,012.00 1 PCS 4,012.00 4,012.00 0 0 4,012.00',
+    '4 Bill Amount 4,012.00 1 PCS 4,012.00 4,012.00 0 0 4,012.00',
+    'Total Tax 612.00',
+    'Total Amount 4,012.00'
+  ].join(String.fromCharCode(10));
+  const fp=parseBill(footerAsRow);
+  assert.strictEqual(fp.items.length,2,'invoice/bill totals must never become products');
+  assert.deepStrictEqual(fp.items.map(x=>x.name),['Bosch Drill Machine','Taparia Screwdriver Set']);
+}
