@@ -27,6 +27,7 @@ async function init(){
  await run('CREATE TABLE IF NOT EXISTS order_return_items(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER NOT NULL,return_id INTEGER NOT NULL,order_item_id INTEGER NOT NULL,quantity REAL NOT NULL,reason TEXT DEFAULT "")');
 
  await run('CREATE TABLE IF NOT EXISTS stock_transactions(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER NOT NULL,item_id INTEGER,type TEXT,quantity REAL,reason TEXT,order_id INTEGER,order_item_id INTEGER,created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+ await run('CREATE TABLE IF NOT EXISTS pending_order_confirmations(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER NOT NULL,sender_phone TEXT NOT NULL,whatsapp_from TEXT DEFAULT "",original_message_id TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP,UNIQUE(business_id,original_message_id))');
  await run('CREATE TABLE IF NOT EXISTS processed_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,business_id INTEGER NOT NULL,message_id TEXT NOT NULL,whatsapp_from TEXT,sender_phone TEXT,body TEXT,UNIQUE(business_id,message_id))');
  await run('CREATE TABLE IF NOT EXISTS whatsapp_lid_map(business_id INTEGER NOT NULL,lid TEXT NOT NULL,phone TEXT,PRIMARY KEY(business_id,lid))');
  await run('CREATE TABLE IF NOT EXISTS whatsapp_sessions(business_id INTEGER PRIMARY KEY,status TEXT DEFAULT "DISCONNECTED",message TEXT DEFAULT "",qr TEXT,updated_at TEXT DEFAULT CURRENT_TIMESTAMP)');
@@ -137,6 +138,19 @@ async function createOrder(o){
     if(r.match==='ambiguous'){const e=Error('Multiple products match "'+clean(x.item)+'"');e.code='AMBIGUOUS_PRODUCT';e.input=clean(x.item);e.candidates=r.candidates;throw e}
     resolved.push({input:x,quantity:q,result:r});
   }
+  const shortages=[];
+  for(const row of resolved){
+    const p=row.result.product,q=row.quantity;
+    if(p && q>0 && Number(p.current_stock)<q){
+      shortages.push({name:p.name,sku:p.sku||'',requested:q,available:Number(p.current_stock||0),unit:p.unit||'PCS'});
+    }
+  }
+  if(shortages.length){
+    const e=Error('Insufficient stock requires sender confirmation');
+    e.code='INSUFFICIENT_STOCK_CONFIRMATION';
+    e.shortages=shortages;
+    throw e;
+  }
   await run('BEGIN IMMEDIATE');
   try{
     const dup=await get('SELECT id FROM orders WHERE business_id=? AND whatsapp_message_id=?',[o.businessId,o.whatsappMessageId]);
@@ -148,7 +162,6 @@ async function createOrder(o){
       const x=row.input,name=clean(x.item),q=row.quantity,p=row.result.product;
       if(!p){rejectedQty+=Math.max(0,q);await run('INSERT INTO order_items(business_id,order_id,item_name,requested_quantity,rejected_quantity,status,rejection_reason) VALUES(?,?,?,?,?,?,?)',[o.businessId,r.lastID,name,q,q,'REJECTED','Product not found in stock']);continue}
       if(!(q>0))continue;
-      if(Number(p.current_stock)<q){rejectedQty+=q;await run('INSERT INTO order_items(business_id,order_id,item_id,item_name,requested_quantity,rejected_quantity,status,rejection_reason,unit,rate,hsn_code,gst_rate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',[o.businessId,r.lastID,p.id,p.name,q,q,'REJECTED','Insufficient stock',p.unit,p.selling_price,p.hsn_code,p.gst_rate]);continue}
       const taxable=money(q*p.selling_price),tax=money(taxable*p.gst_rate/100);
       const oi=await run('INSERT INTO order_items(business_id,order_id,item_id,item_name,requested_quantity,accepted_quantity,status,unit,rate,hsn_code,gst_rate,taxable_value,total_tax,line_total) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',[o.businessId,r.lastID,p.id,p.name,q,q,'ACCEPTED',p.unit,p.selling_price,p.hsn_code,p.gst_rate,taxable,tax,money(taxable+tax)]);
       await run('UPDATE items SET current_stock=current_stock-? WHERE business_id=? AND id=?',[q,o.businessId,p.id]);
@@ -161,6 +174,17 @@ async function createOrder(o){
     await run('COMMIT');return order(o.businessId,r.lastID);
   }catch(e){await run('ROLLBACK').catch(()=>{});throw e}
 }
+async function savePendingOrderConfirmation(b,d){
+  await run('DELETE FROM pending_order_confirmations WHERE business_id=? AND sender_phone=?',[b,clean(d.senderPhone)]);
+  await run('INSERT INTO pending_order_confirmations(business_id,sender_phone,whatsapp_from,original_message_id,payload) VALUES(?,?,?,?,?)',[b,clean(d.senderPhone),clean(d.whatsappFrom),clean(d.originalMessageId),JSON.stringify(d.payload)]);
+  return getPendingOrderConfirmation(b,d.senderPhone);
+}
+async function getPendingOrderConfirmation(b,senderPhone){
+  const r=await get('SELECT * FROM pending_order_confirmations WHERE business_id=? AND sender_phone=? AND created_at>=datetime("now","-30 minutes") ORDER BY id DESC LIMIT 1',[b,clean(senderPhone)]);
+  if(r){try{r.payload=JSON.parse(r.payload)}catch{r.payload=null}}
+  return r||null;
+}
+async function clearPendingOrderConfirmation(b,id){return run('DELETE FROM pending_order_confirmations WHERE business_id=? AND id=?',[b,id])}
 async function orders(b){const rows=await all("SELECT o.*,s.name sender_name,s.whatsapp_id sender_phone FROM orders o LEFT JOIN senders s ON s.id=o.sender_id WHERE o.business_id=? ORDER BY o.id DESC LIMIT 1000",[b]);for(const o of rows){const sums=await get("SELECT COALESCE(SUM(accepted_quantity),0) accepted_qty,COALESCE(SUM(rejected_quantity),0) rejected_qty FROM order_items WHERE business_id=? AND order_id=?",[b,o.id]);const ret=await get("SELECT COALESCE(SUM(ri.quantity),0) returned_qty FROM order_return_items ri JOIN order_returns rr ON rr.id=ri.return_id WHERE ri.business_id=? AND rr.order_id=?",[b,o.id]);o.accepted_items=Number(sums?.accepted_qty||0);o.rejected_items=Number(sums?.rejected_qty||0);o.returned_items=Number(ret?.returned_qty||0);o.item_names=(await all("SELECT COALESCE(i.name,oi.item_name) item_name FROM order_items oi LEFT JOIN items i ON i.business_id=oi.business_id AND i.id=oi.item_id WHERE oi.business_id=? AND oi.order_id=? AND oi.accepted_quantity>0 ORDER BY oi.id",[b,o.id])).map(x=>x.item_name).join(', ');if(o.returned_items>0)o.status=o.returned_items>=o.accepted_items?'RETURNED':'PARTIAL_RETURN';}return rows}
 async function order(b,id){const o=await get("SELECT o.*,s.name sender_name,s.whatsapp_id sender_phone FROM orders o LEFT JOIN senders s ON s.id=o.sender_id WHERE o.business_id=? AND o.id=?",[b,id]);if(o){o.items=await all("SELECT oi.*,COALESCE(i.name,oi.item_name) item_name,COALESCE((SELECT SUM(ri.quantity) FROM order_return_items ri JOIN order_returns rr ON rr.id=ri.return_id WHERE ri.business_id=? AND rr.order_id=? AND ri.order_item_id=oi.id),0) returned_quantity FROM order_items oi LEFT JOIN items i ON i.business_id=oi.business_id AND i.id=oi.item_id WHERE oi.business_id=? AND oi.order_id=?",[b,id,b,id]);o.accepted_items=o.items.reduce((s,x)=>s+Number(x.accepted_quantity||0),0);o.rejected_items=o.items.reduce((s,x)=>s+Number(x.rejected_quantity||0),0);o.returned_items=o.items.reduce((s,x)=>s+Number(x.returned_quantity||0),0);o.item_names=o.items.filter(x=>Number(x.accepted_quantity||0)>0).map(x=>x.item_name).join(', ');for(const x of o.items){x.remaining_quantity=Math.max(0,Number(x.accepted_quantity||0)-Number(x.returned_quantity||0));}if(o.returned_items>0)o.status=o.returned_items>=o.accepted_items?'RETURNED':'PARTIAL_RETURN';}return o}
 async function returnsForOrder(b,id){return all('SELECT r.*,COUNT(ri.id) item_lines FROM order_returns r LEFT JOIN order_return_items ri ON ri.return_id=r.id WHERE r.business_id=? AND r.order_id=? GROUP BY r.id ORDER BY r.id DESC',[b,id])}
@@ -309,4 +333,4 @@ async function confirmPurchase(b,id,rows){
 async function dashboard(b){const one=async(s)=>Number((await get(s,[b]))?.c||0);return {orders:await one('SELECT COUNT(*) c FROM orders WHERE business_id=?'),products:await one('SELECT COUNT(*) c FROM items WHERE business_id=?'),lowStock:await one('SELECT COUNT(*) c FROM items WHERE business_id=? AND current_stock<=minimum_stock'),todayOrders:await one('SELECT COUNT(*) c FROM orders WHERE business_id=? AND date=date("now","localtime")'),pending:await one('SELECT COUNT(*) c FROM orders WHERE business_id=? AND status="PENDING"'),invoices:await one('SELECT COUNT(*) c FROM invoices WHERE business_id=?'),purchases:await one('SELECT COUNT(*) c FROM purchase_bills WHERE business_id=?'),stockValue:money((await get('SELECT COALESCE(SUM(current_stock*purchase_price),0) v FROM items WHERE business_id=?',[b]))?.v)}}
 async function waStatus(b){return get('SELECT * FROM whatsapp_sessions WHERE business_id=?',[b])} async function setWa(b,s,m,q){return run('INSERT INTO whatsapp_sessions(business_id,status,message,qr,updated_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(business_id) DO UPDATE SET status=excluded.status,message=excluded.message,qr=excluded.qr,updated_at=CURRENT_TIMESTAMP',[b,s,m||'',q||null])}
 async function audit(b,u,a,e,id,d){return run('INSERT INTO audit_logs(business_id,user_id,action,entity,entity_id,details) VALUES(?,?,?,?,?,?)',[b,u,a,e,id,d||''])}
-module.exports={get,all,run,ready,register,login,session,logout,business,updateBusiness,items,addItem,editItem,stockIn,deleteItem,transactions,senders,addSender,editSender,delSender,sender,lid,saveLid,createOrder,orders,order,claimConfirmation,confirmationSent,confirmationPending,claimProcessedMessage,returnsForOrder,createOrderReturn,customers,addCustomer,findCustomerByName,invoices,invoice,createInvoice,billableOrdersForCustomer,finalizeInvoice,cancelInvoice,purchaseBills,createPurchase,purchase,addPurchaseItem,confirmPurchase,makeSku,dashboard,waStatus,setWa,audit,normalizePhone,hsnMaster,addHsn,updateHsn,deleteHsn,aliases,addAlias,deleteAlias,normalizeProductText};
+module.exports={get,all,run,ready,register,login,session,logout,business,updateBusiness,items,addItem,editItem,stockIn,deleteItem,transactions,senders,addSender,editSender,delSender,sender,lid,saveLid,createOrder,orders,order,claimConfirmation,confirmationSent,confirmationPending,claimProcessedMessage,savePendingOrderConfirmation,getPendingOrderConfirmation,clearPendingOrderConfirmation,returnsForOrder,createOrderReturn,customers,addCustomer,findCustomerByName,invoices,invoice,createInvoice,billableOrdersForCustomer,finalizeInvoice,cancelInvoice,purchaseBills,createPurchase,purchase,addPurchaseItem,confirmPurchase,makeSku,dashboard,waStatus,setWa,audit,normalizePhone,hsnMaster,addHsn,updateHsn,deleteHsn,aliases,addAlias,deleteAlias,normalizeProductText};
