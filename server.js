@@ -16,110 +16,190 @@ async function auth(req,res,next){try{const s=await db.session(cookieToken(req))
 function csrf(req,res,next){if(['GET','HEAD','OPTIONS'].includes(req.method))return next();const c=String(req.headers['x-csrf-token']||'');if(!c)return res.status(403).json({error:'CSRF token missing'});db.get('SELECT csrf_hash FROM sessions WHERE token_hash=?',[crypto.createHash('sha256').update(cookieToken(req)).digest('hex')]).then(s=>{if(!s||s.csrf_hash!==crypto.createHash('sha256').update(c).digest('hex'))return res.status(403).json({error:'Invalid CSRF token'});next()}).catch(e=>res.status(500).json({error:e.message}))}
 function words(n){n=Math.round(Number(n)||0);const a=['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'],b=['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];function x(v){if(v<20)return a[v];if(v<100)return b[Math.floor(v/10)]+' '+a[v%10];if(v<1000)return a[Math.floor(v/100)]+' Hundred '+x(v%100);if(v<100000)return x(Math.floor(v/1000))+' Thousand '+x(v%1000);if(v<10000000)return x(Math.floor(v/100000))+' Lakh '+x(v%100000);return x(Math.floor(v/10000000))+' Crore '+x(v%10000000)}return (x(n).replace(/\s+/g,' ').trim()||'Zero')+' Rupees Only'}
 function pdfInvoice(res,title,biz,inv){
-  const doc=new PDFDocument({size:'A4',margin:32});
+  const doc=new PDFDocument({size:'A4',margin:28,bufferPages:true});
   res.setHeader('Content-Type','application/pdf');
   res.setHeader('Content-Disposition','inline; filename="'+title+'.pdf"');
   doc.pipe(res);
 
-  const W=doc.page.width, L=32, R=W-32, CW=R-L;
+  const W=doc.page.width,L=28,R=W-28,CW=R-L;
   const money2=v=>Number(v||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const drawLine=(y)=>{doc.moveTo(L,y).lineTo(R,y).stroke();};
+  const items=Array.isArray(inv.items)?inv.items:[];
+  const drawLine=y=>{doc.moveTo(L,y).lineTo(R,y).stroke();};
   const cell=(x,y,w,h,text,opts={})=>{
     doc.rect(x,y,w,h).stroke();
-    doc.fontSize(opts.size||7.5).font(opts.bold?'Helvetica-Bold':'Helvetica')
-      .text(String(text??''),x+4,y+4,w-8,h-8,{align:opts.align||'left'});
+    doc.fontSize(opts.size||7.2).font(opts.bold?'Helvetica-Bold':'Helvetica')
+      .text(String(text??''),x+3,y+3,w-6,h-6,{align:opts.align||'left',lineBreak:false,ellipsis:true});
   };
 
-  doc.fontSize(17).font('Helvetica-Bold').text('TAX INVOICE',L,28,CW,{align:'center'});
-  doc.fontSize(8).font('Helvetica').text('ORIGINAL FOR RECIPIENT',L,49,CW,{align:'center'});
-
-  let y=68;
-  doc.fontSize(15).font('Helvetica-Bold').text(biz.name||'Business',L,y,CW,{align:'center'});
-  y+=19;
-  doc.fontSize(8).font('Helvetica').text('GSTIN: '+(biz.gstin||'-'),L,y,CW,{align:'center'});
-  y+=13;
-  doc.text(biz.address||'-',L,y,CW,{align:'center'});
-  y+=18;
-  drawLine(y); y+=7;
-
-  const leftW=CW*0.56, rightW=CW-leftW;
-  const infoH=112;
-  doc.rect(L,y,leftW,infoH).stroke();
-  doc.rect(L+leftW,y,rightW,infoH).stroke();
-  doc.fontSize(8).font('Helvetica-Bold').text('Customer Detail',L+7,y+7);
-  doc.font('Helvetica').fontSize(8)
-    .text('Customer: '+(inv.customer_name||'-'),L+7,y+23,leftW-14)
-    .text('Address: '+(inv.customer_address||'-'),L+7,y+38,leftW-14)
-    .text('Phone: '+(inv.customer_phone||'-'),L+7,y+53,leftW-14)
-    .text('GSTIN: '+(inv.customer_gstin||'-'),L+7,y+68,leftW-14)
-    .text('Place of Supply: '+(inv.place_of_supply||'-'),L+7,y+83,leftW-14);
-  const rx=L+leftW+7;
-  doc.font('Helvetica').fontSize(8)
-    .text('Invoice No.: '+(inv.invoice_no||'-'),rx,y+10,rightW-14)
-    .text('Invoice Date: '+(inv.invoice_date||'-'),rx,y+26,rightW-14)
-    .text('Challan No.: '+(inv.challan_no||'-'),rx,y+42,rightW-14)
-    .text('Challan Date: '+(inv.challan_date||'-'),rx,y+58,rightW-14)
-    .text('E-Way Bill No.: '+(inv.eway_bill_no||'-'),rx,y+74,rightW-14)
-    .text('Transport: '+(inv.transport||'-'),rx,y+90,rightW-14);
-  y+=infoH+10;
-
   const cols=[
-    {t:'Sr. No.',w:38,a:'center'},{t:'Name of Product / Service',w:150},
-    {t:'HSN / SAC',w:58,a:'center'},{t:'Qty',w:45,a:'center'},
-    {t:'Rate',w:62,a:'right'},{t:'Taxable Value',w:75,a:'right'},
-    {t:'GST',w:45,a:'right'},{t:'Total',w:CW-473,a:'right'}
+    {t:'Sr.',w:30,a:'center'},
+    {t:'Product / Service',w:177},
+    {t:'HSN / SAC',w:55,a:'center'},
+    {t:'Qty',w:48,a:'center'},
+    {t:'Rate',w:58,a:'right'},
+    {t:'Taxable',w:67,a:'right'},
+    {t:'GST',w:43,a:'right'},
+    {t:'Total',w:CW-478,a:'right'}
   ];
-  const headerH=24;
-  let x=L;
-  cols.forEach(c=>{cell(x,y,c.w,headerH,c.t,{bold:true,size:7,align:c.a||'center'});x+=c.w});
-  y+=headerH;
-  const rowH=30;
-  (inv.items||[]).forEach((it,idx)=>{
-    x=L;
-    const vals=[
-      idx+1,
-      it.item_name||'-',
-      it.hsn_code||'-',
-      money2(it.quantity)+' '+(it.unit||'PCS'),
-      money2(it.rate),
-      money2(it.taxable_value),
-      money2(it.total_tax),
-      money2(it.line_total)
-    ];
-    cols.forEach((c,j)=>{cell(x,y,c.w,rowH,vals[j],{size:j===1?7:7,align:c.a||'left'});x+=c.w});
-    y+=rowH;
-  });
-  const totalVals=['','','','TOTAL',money2((inv.items||[]).reduce((a,x)=>a+Number(x.rate||0)*Number(x.quantity||0),0)),money2(inv.subtotal),money2((Number(inv.cgst||0)+Number(inv.sgst||0)+Number(inv.igst||0))),money2(inv.total)];
-  x=L; cols.forEach((c,j)=>{cell(x,y,c.w,25,totalVals[j],{bold:true,size:7,align:c.a||'right'});x+=c.w}); y+=25;
+  const rowH=23,headerH=22;
 
-  y+=10;
-  const sumW=250;
-  doc.font('Helvetica-Bold').fontSize(8).text('Tax Summary',L,y);
-  y+=15;
-  [['Taxable Amount',money2(inv.subtotal)],['CGST',money2(inv.cgst)],['SGST',money2(inv.sgst)],['IGST',money2(inv.igst)],['Total Tax',money2(Number(inv.cgst)+Number(inv.sgst)+Number(inv.igst))],['Total Amount After Tax','₹ '+money2(inv.total)]].forEach((r,k)=>{
-    const h=k===5?24:19;
-    cell(L,y,sumW/2,h,r[0],{bold:k===5,size:7.5});
-    cell(L+sumW/2,y,sumW/2,h,r[1],{bold:k===5,size:7.5,align:'right'});
-    y+=h;
-  });
-  doc.font('Helvetica-Bold').fontSize(8).text('Total in words',L+sumW+20,y-110);
-  doc.font('Helvetica').fontSize(9).text(words(inv.total).toUpperCase(),L+sumW+20,y-92,CW-sumW-20);
-  doc.font('Helvetica').fontSize(8).text('Certified that the particulars given above are true and correct.',L,y+10,CW);
-  y+=38;
+  const drawTitle=continued=>{
+    doc.fontSize(16).font('Helvetica-Bold').text(continued?'TAX INVOICE — CONTINUED':'TAX INVOICE',L,24,CW,{align:'center'});
+    doc.fontSize(7.5).font('Helvetica').text('ORIGINAL FOR RECIPIENT',L,43,CW,{align:'center'});
+    let y=58;
+    doc.fontSize(13).font('Helvetica-Bold').text(biz.name||'Business',L,y,CW,{align:'center'});
+    y+=16;
+    doc.fontSize(7.5).font('Helvetica').text('GSTIN: '+(biz.gstin||'-'),L,y,CW,{align:'center'});
+    y+=11;
+    doc.text(biz.address||'-',L,y,CW,{align:'center'});
+    y+=16; drawLine(y); return y+6;
+  };
 
-  const footerTop=Math.max(y,doc.page.height-145);
-  doc.moveTo(L,footerTop).lineTo(R,footerTop).stroke();
-  doc.font('Helvetica-Bold').fontSize(8).text('Terms and Conditions',L,footerTop+8);
-  doc.font('Helvetica').fontSize(7)
-    .text('1. Goods once sold will not be taken back.\n2. Delivery subject to agreed terms.\n3. E. & O.E.',L,footerTop+23,250);
-  doc.font('Helvetica-Bold').fontSize(8).text('Customer Signature',L+270,footerTop+8);
-  doc.rect(L+270,footerTop+22,110,45).stroke();
-  doc.font('Helvetica-Bold').fontSize(8).text('For '+(biz.name||'Business'),R-150,footerTop+8,150,{align:'right'});
-  doc.rect(R-150,footerTop+22,150,45).stroke();
-  doc.font('Helvetica').fontSize(8).text('Authorised Signatory',R-150,footerTop+72,150,{align:'right'});
-  doc.fontSize(7).text('Thank you for shopping with us!',L,doc.page.height-25,CW,{align:'center'});
+  const drawInfo=(y)=>{
+    const leftW=CW*0.57,rightW=CW-leftW,infoH=91;
+    doc.rect(L,y,leftW,infoH).stroke();
+    doc.rect(L+leftW,y,rightW,infoH).stroke();
+    doc.fontSize(7.5).font('Helvetica-Bold').text('Customer Detail',L+6,y+6);
+    doc.font('Helvetica').fontSize(7.5)
+      .text('Customer: '+(inv.customer_name||'-'),L+6,y+20,leftW-12)
+      .text('Address: '+(inv.customer_address||'-'),L+6,y+34,leftW-12)
+      .text('Phone: '+(inv.customer_phone||'-'),L+6,y+48,leftW-12)
+      .text('GSTIN: '+(inv.customer_gstin||'-'),L+6,y+62,leftW-12)
+      .text('Place of Supply: '+(inv.place_of_supply||'-'),L+6,y+76,leftW-12);
+    const rx=L+leftW+6;
+    doc.fontSize(7.5)
+      .text('Invoice No.: '+(inv.invoice_no||'-'),rx,y+9,rightW-12)
+      .text('Invoice Date: '+(inv.invoice_date||'-'),rx,y+23,rightW-12)
+      .text('Challan No.: '+(inv.challan_no||'-'),rx,y+37,rightW-12)
+      .text('E-Way Bill No.: '+(inv.eway_bill_no||'-'),rx,y+51,rightW-12)
+      .text('Transport: '+(inv.transport||'-'),rx,y+65,rightW-12);
+    return y+infoH+8;
+  };
+
+  const drawTableHeader=y=>{
+    let x=L;
+    cols.forEach(c=>{cell(x,y,c.w,headerH,c.t,{bold:true,size:6.8,align:c.a||'center'});x+=c.w});
+    return y+headerH;
+  };
+
+  const drawRows=(y,start,end)=>{
+    for(let idx=start;idx<end;idx++){
+      const it=items[idx]; let x=L;
+      const vals=[
+        idx+1,it.item_name||'-',it.hsn_code||'-',
+        money2(it.quantity)+' '+(it.unit||'PCS'),
+        money2(it.rate),money2(it.taxable_value),
+        money2(it.total_tax),money2(it.line_total)
+      ];
+      cols.forEach((c,j)=>{cell(x,y,c.w,rowH,vals[j],{size:j===1?6.7:6.6,align:c.a||'left'});x+=c.w});
+      y+=rowH;
+    }
+    return y;
+  };
+
+  const drawTotals=y=>{
+    const totalVals=['','','','TOTAL',
+      money2(items.reduce((a,x)=>a+Number(x.rate||0)*Number(x.quantity||0),0)),
+      money2(inv.subtotal),
+      money2(Number(inv.cgst||0)+Number(inv.sgst||0)+Number(inv.igst||0)),
+      money2(inv.total)];
+    let x=L; cols.forEach((c,j)=>{cell(x,y,c.w,22,totalVals[j],{bold:true,size:6.8,align:c.a||'right'});x+=c.w});
+    return y+22;
+  };
+
+  const drawFinal=y0=>{
+    let y=y0+8;
+    const sumW=235;
+    doc.font('Helvetica-Bold').fontSize(7.5).text('Tax Summary',L,y); y+=12;
+    [['Taxable Amount',money2(inv.subtotal)],['CGST',money2(inv.cgst)],['SGST',money2(inv.sgst)],
+     ['IGST',money2(inv.igst)],['Total Tax',money2(Number(inv.cgst)+Number(inv.sgst)+Number(inv.igst))],
+     ['Total Amount After Tax','₹ '+money2(inv.total)]].forEach((r,k)=>{
+      const h=k===5?22:17;
+      cell(L,y,sumW/2,h,r[0],{bold:k===5,size:7});
+      cell(L+sumW/2,y,sumW/2,h,r[1],{bold:k===5,size:7,align:'right'}); y+=h;
+    });
+    doc.font('Helvetica-Bold').fontSize(7.5).text('Total in words',L+sumW+18,y0+8);
+    doc.font('Helvetica').fontSize(8).text(words(inv.total).toUpperCase(),L+sumW+18,y0+25,CW-sumW-18);
+    doc.font('Helvetica').fontSize(7).text('Certified that the particulars given above are true and correct.',L,y+7,CW);
+    return y+25;
+  };
+
+  const drawFooter=()=>{
+    const h=86,top=doc.page.height-108;
+    doc.moveTo(L,top).lineTo(R,top).stroke();
+    doc.font('Helvetica-Bold').fontSize(7.5).text('Terms and Conditions',L,top+7);
+    doc.font('Helvetica').fontSize(6.6).text('1. Goods once sold will not be taken back.\n2. Delivery subject to agreed terms.\n3. E. & O.E.',L,top+20,235);
+    doc.font('Helvetica-Bold').fontSize(7.5).text('Customer Signature',L+255,top+7);
+    doc.rect(L+255,top+20,95,38).stroke();
+    doc.font('Helvetica-Bold').fontSize(7.5).text('For '+(biz.name||'Business'),R-145,top+7,145,{align:'right'});
+    doc.rect(R-145,top+20,145,38).stroke();
+    doc.font('Helvetica').fontSize(7).text('Authorised Signatory',R-145,top+62,145,{align:'right'});
+    doc.fontSize(6.5).text('Thank you for shopping with us!',L,doc.page.height-23,CW,{align:'center'});
+  };
+
+  let pageNo=1;
+  let y=drawTitle(false);
+  y=drawInfo(y);
+  y=drawTableHeader(y);
+
+  // Reserve enough room for the final totals and footer. If everything fits,
+  // the invoice stays on one professional page. Otherwise fill page 1 with
+  // as many products as safely fit and continue the remaining products.
+  const footerTop=doc.page.height-108;
+  const finalReserve=174;
+  const firstCapacity=Math.max(1,Math.floor((footerTop-finalReserve-y)/rowH));
+  let start=0;
+
+  if(items.length<=firstCapacity){
+    y=drawRows(y,0,items.length);
+    y=drawTotals(y);
+    drawFinal(y);
+    drawFooter();
+  }else{
+    let end=Math.min(items.length,start+Math.max(1,Math.floor((footerTop-y-6)/rowH)));
+    y=drawRows(y,start,end);
+    doc.font('Helvetica-Oblique').fontSize(6.8).text('Continued on next page…',L,y+5,CW,{align:'right'});
+    drawFooter();
+    start=end;
+
+    while(start<items.length){
+      doc.addPage();
+      pageNo++;
+      y=drawTitle(true);
+      doc.font('Helvetica-Bold').fontSize(7).text('Invoice No.: '+(inv.invoice_no||'-')+'   |   Page '+pageNo,L,y,CW,{align:'right'});
+      y+=13;
+      y=drawTableHeader(y);
+
+      const remaining=items.length-start;
+      const isLast=remaining<=Math.max(1,Math.floor((footerTop-(y+finalReserve))/rowH));
+      const cap=isLast
+        ? Math.max(1,Math.floor((footerTop-finalReserve-y)/rowH))
+        : Math.max(1,Math.floor((footerTop-y-8)/rowH));
+      const end2=Math.min(items.length,start+cap);
+      y=drawRows(y,start,end2);
+      start=end2;
+
+      if(start<items.length){
+        doc.font('Helvetica-Oblique').fontSize(6.8).text('Continued on next page…',L,y+5,CW,{align:'right'});
+        drawFooter();
+      }else{
+        y=drawTotals(y);
+        drawFinal(y);
+        drawFooter();
+      }
+    }
+  }
+
+  // Add page numbers after all pages have been generated.
+  const range=doc.bufferedPageRange();
+  for(let i=0;i<range.count;i++){
+    doc.switchToPage(i);
+    doc.font('Helvetica').fontSize(6.5).fillColor('#555')
+      .text('Page '+(i+1)+' of '+range.count,L,doc.page.height-13,CW,{align:'right'});
+  }
   doc.end();
 }
+
 app.get('/api/health',async(r,s)=>{try{await db.ready; s.json({ok:true})}catch(e){s.status(500).json({ok:false,error:e.message})}});
 app.post('/api/auth/register',async(r,s)=>{try{await db.ready;s.status(201).json({success:true,business:await db.register(r.body.firm_id,r.body.name,r.body.password)})}catch(e){s.status(400).json({error:e.message})}});
 app.post('/api/auth/login',async(r,s)=>{
