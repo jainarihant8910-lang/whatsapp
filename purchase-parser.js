@@ -301,6 +301,8 @@ function parseBill(text){
     }
     if(nums.length<2)return false;
     const total=nums[nums.length-1];
+    let taxable=0,rate=0,taxAmount=0;
+    let gstRate=percentages.length?percentages[percentages.length-1]:0;
     const hasParenthesizedGst=parenthesizedRates.length>0;
     if(hasParenthesizedGst && nums.length>=3){
       // Retail layout: MRP, rate, tax, (GST%), total.
@@ -317,8 +319,6 @@ function parseBill(text){
     const beforeGst=firstPercentIndex>=0
       ? [...tail.slice(0,firstPercentIndex).matchAll(/\d[\d,]*(?:\.\d+)?/g)].map(m=>num(m[0]))
       : nums.slice(0,-1);
-    let taxable=0,rate=0,taxAmount=0;
-    let gstRate=percentages.length?percentages[percentages.length-1]:0;
     // Prefer a numeric sequence that satisfies qty*rate=taxable.
     for(let i=0;i<nums.length-1;i++){
       const r0=nums[i], t0=nums[i+1];
