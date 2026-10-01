@@ -28,7 +28,7 @@ async function manageAliases(id,name){
  $('aliasForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/items/'+id+'/aliases',{method:'POST',body:{alias:new FormData(e.target).get('alias')}});manageAliases(id,name)}catch(x){toast(x.message,true)}};
 }
 async function deleteAlias(aliasId,itemId,name){try{await api('/api/item-aliases/'+aliasId,{method:'DELETE'});manageAliases(itemId,name)}catch(e){toast(e.message,true)}}
-async async function openProduct(prefill={}){
+async function openProduct(prefill={}){
  const hm=await api('/api/hsn');
  modal('Add product',`<form id='productForm' class='formgrid'>
  <label class='wide'>Product name <span class='muted'>Search classification ↗</span><div class='inputrow'><input id='productName' name='name' required value='${esc(prefill.name||'')}' placeholder='e.g. A4 paper, cutting machine, mobile phone'><button type='button' title='Search product classification' onclick='searchProductClassification()'>🔍</button></div></label>
