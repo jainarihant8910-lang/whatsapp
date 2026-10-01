@@ -541,15 +541,28 @@ async function startBusiness(businessId, force = false) {
           return;
         }
 
+        console.log('Processing delivery message:', {
+          messageId: whatsappMessageId,
+          from,
+          deliveredTo: parsed.deliveredTo,
+          items: parsed.items
+        });
+
         const senderPhone = await phone(message, client, businessId);
+        console.log('Resolved sender phone:', senderPhone || '(not resolved)');
         if (!senderPhone) {
-          await db.setWa(businessId, 'CONNECTED', 'Message received, but WhatsApp did not expose the sender phone number. Check the allowed-number mapping.', null).catch(() => {});
+          const msg = '❌ Delivery not recorded: could not identify the sender phone number. Check the sender mapping in DeliveryOS.';
+          await db.setWa(businessId, 'CONNECTED', msg, null).catch(() => {});
+          try { await client.sendMessage(from, msg, {ignoreQuoteErrors:true, waitUntilMsgSent:true}); } catch (e) { console.error('Sender-error reply failed:', e.message); }
           return;
         }
 
         const allowed = await db.sender(businessId, senderPhone);
+        console.log('Sender authorization:', allowed ? 'APPROVED' : 'NOT APPROVED', senderPhone);
         if (!allowed) {
-          await db.setWa(businessId, 'CONNECTED', 'Message received from an unapproved number. No order was created.', null).catch(() => {});
+          const msg = '❌ Delivery not recorded: this WhatsApp number is not approved in DeliveryOS Senders.';
+          await db.setWa(businessId, 'CONNECTED', msg, null).catch(() => {});
+          try { await client.sendMessage(from, msg, {ignoreQuoteErrors:true, waitUntilMsgSent:true}); } catch (e) { console.error('Authorization-error reply failed:', e.message); }
           return;
         }
 
