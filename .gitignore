@@ -10,3 +10,7 @@ data/ocr/
 .wwebjs_auth_backup/
 .wwebjs_cache_backup/
 workspace_contents/
+.ocr-venv/
+eng.traineddata
+data/chrome-cache/
+data/chrome-config/
