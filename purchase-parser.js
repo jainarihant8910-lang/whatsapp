@@ -45,8 +45,9 @@ function parseBill(text){
   const transportId=find(/Transport\s*ID\s*[:\-]?\s*([A-Z0-9\/\-]+)/i);
   const pos=find(/Place\s*of\s*Supply\s*[:\-]?\s*(.+?)(?=\s+Invoice\s*No|$)/i);
   const invoiceTotal=amountAfter(/(?:Total Amount After Tax|Total Amount)\b/i);
-  const taxableTotal=amountAfter(/^Taxable Amount\b/i);
+  const taxableTotal=amountAfter(/^(?:Taxable Amount|Sub[- ]?Total)\b/i);
   const taxTotal=amountAfter(/^Total Tax\b/i);
+  const roundOff=amountAfter(/^Round(?:ing)?\s*Off\b/i);
   // GST is often printed in the lower summary section as:
   // CGST 9%  /  amount, SGST 9% / amount, or IGST 18% / amount.
   // OCR may place the percentage and amount on separate lines, so inspect
@@ -473,6 +474,6 @@ function parseBill(text){
   if(summaryGstRate>0){
     for(const item of items)if(!(Number(item.gst_rate)>0))item.gst_rate=summaryGstRate;
   }
-  return {supplier_name:sellerName,supplier_gstin:sellerGstin,supplier_address:sellerAddress,buyer_name:buyerName,buyer_gstin:buyerGstin,buyer_address:buyerAddress,buyer_state:buyerState,buyer_state_code:buyerStateCode,buyer_pan:buyerPan,seller_pan:sellerPan,seller_phone:sellerPhone,seller_address:sellerAddress,seller_state:sellerState,seller_state_code:sellerStateCode,seller_id:sellerPan||sellerGstin||sellerName,buyer_id:buyerGstin||buyerPan||buyerName,invoice_number:invoiceNo,invoice_date:invoiceDate,place_of_supply:pos,challan_number:challanNumber,challan_date:challanDate,eway_bill_number:eway,transport,transport_id:transportId,payment_method:paymentMethod,reverse_charge:reverseCharge,buyer_order_number:buyerOrderNumber,supplier_reference:supplierReference,vehicle_number:vehicleNumber,delivery_date:deliveryDate,transport_details:transportDetails,terms_of_delivery:termsOfDelivery,taxable_total:finalTaxableTotal,tax_total:finalTaxTotal,cgst,sgst,igst,invoice_total:finalInvoiceTotal,items,raw_text:raw};
+  return {supplier_name:sellerName,supplier_gstin:sellerGstin,supplier_address:sellerAddress,buyer_name:buyerName,buyer_gstin:buyerGstin,buyer_address:buyerAddress,buyer_state:buyerState,buyer_state_code:buyerStateCode,buyer_pan:buyerPan,seller_pan:sellerPan,seller_phone:sellerPhone,seller_address:sellerAddress,seller_state:sellerState,seller_state_code:sellerStateCode,seller_id:sellerPan||sellerGstin||sellerName,buyer_id:buyerGstin||buyerPan||buyerName,invoice_number:invoiceNo,invoice_date:invoiceDate,place_of_supply:pos,challan_number:challanNumber,challan_date:challanDate,eway_bill_number:eway,transport,transport_id:transportId,payment_method:paymentMethod,reverse_charge:reverseCharge,buyer_order_number:buyerOrderNumber,supplier_reference:supplierReference,vehicle_number:vehicleNumber,delivery_date:deliveryDate,transport_details:transportDetails,terms_of_delivery:termsOfDelivery,taxable_total:finalTaxableTotal,tax_total:finalTaxTotal,cgst,sgst,igst,invoice_total:finalInvoiceTotal,round_off:roundOff,items,raw_text:raw};
 }
 module.exports={parseBill};
