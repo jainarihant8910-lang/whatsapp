@@ -12,8 +12,10 @@ app.use((req,res,next)=>{
 });
 app.use(express.json({limit:'3mb'})); app.use(express.urlencoded({extended:true})); app.use(express.static(PUBLIC));
 function cookieToken(req){const m=String(req.headers.cookie||'').match(/(?:^|;)\s*dm_token=([^;]+)/);return m?decodeURIComponent(m[1]):''}
-async function auth(req,res,next){try{const s=await db.session(cookieToken(req));if(!s)return res.status(401).json({error:'Login required'});req.session=s;req.businessId=s.business_id;req.userId=s.user_id;next()}catch(e){res.status(500).json({error:e.message})}}
-function csrf(req,res,next){if(['GET','HEAD','OPTIONS'].includes(req.method))return next();const c=String(req.headers['x-csrf-token']||'');if(!c)return res.status(403).json({error:'CSRF token missing'});db.get('SELECT csrf_hash FROM sessions WHERE token_hash=?',[crypto.createHash('sha256').update(cookieToken(req)).digest('hex')]).then(s=>{if(!s||s.csrf_hash!==crypto.createHash('sha256').update(c).digest('hex'))return res.status(403).json({error:'Invalid CSRF token'});next()}).catch(e=>res.status(500).json({error:e.message}))}
+function bearerToken(req){const h=String(req.headers.authorization||'');return /^Bearer\s+/i.test(h)?h.replace(/^Bearer\s+/i,'').trim():''}
+function sessionToken(req){return bearerToken(req)||cookieToken(req)}
+async function auth(req,res,next){try{const token=sessionToken(req);const s=await db.session(token);if(!s)return res.status(401).json({error:'Login required'});req.authToken=token;req.session=s;req.businessId=s.business_id;req.userId=s.user_id;next()}catch(e){res.status(500).json({error:e.message})}}
+function csrf(req,res,next){if(['GET','HEAD','OPTIONS'].includes(req.method))return next();const c=String(req.headers['x-csrf-token']||'');if(!c)return res.status(403).json({error:'CSRF token missing'});const token=sessionToken(req);if(!token)return res.status(401).json({error:'Login required'});db.get('SELECT csrf_hash FROM sessions WHERE token_hash=?',[crypto.createHash('sha256').update(token).digest('hex')]).then(s=>{if(!s||s.csrf_hash!==crypto.createHash('sha256').update(c).digest('hex'))return res.status(403).json({error:'Invalid CSRF token'});next()}).catch(e=>res.status(500).json({error:e.message}))}
 function words(n){n=Math.round(Number(n)||0);const a=['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'],b=['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];function x(v){if(v<20)return a[v];if(v<100)return b[Math.floor(v/10)]+' '+a[v%10];if(v<1000)return a[Math.floor(v/100)]+' Hundred '+x(v%100);if(v<100000)return x(Math.floor(v/1000))+' Thousand '+x(v%1000);if(v<10000000)return x(Math.floor(v/100000))+' Lakh '+x(v%100000);return x(Math.floor(v/10000000))+' Crore '+x(v%10000000)}return (x(n).replace(/\s+/g,' ').trim()||'Zero')+' Rupees Only'}
 function pdfInvoice(res,title,biz,inv){
   const doc=new PDFDocument({size:'A4',margin:28,bufferPages:true});
@@ -213,13 +215,14 @@ app.post('/api/auth/login',async(r,s)=>{
     await db.ready;const x=await db.login(r.body.firm_id,r.body.password);
     if(!x)return s.status(401).json({error:'Invalid Firm ID or password'});
     loginAttempts.delete(key);
-    s.cookieToken=x.token;
-    s.setHeader('Set-Cookie','dm_token='+encodeURIComponent(x.token)+'; HttpOnly; Path=/; SameSite=Lax'+(process.env.NODE_ENV==='production'?'; Secure':''));
+    // The token is returned to the tab and stored in sessionStorage by the frontend.
+    // Do not rely on a shared cookie for tenant identity: multiple businesses can
+    // be open in separate browser tabs at the same time.
     try{require('./index').startBusiness(x.business.id).catch(e=>console.error('WhatsApp lazy startup:',e.message))}catch(e){console.error('WhatsApp worker load:',e.message)}
-    s.json({success:true,csrf:x.csrf,business:x.business,user:x.user});
+    s.json({success:true,token:x.token,csrf:x.csrf,business:x.business,user:x.user});
   }catch(e){s.status(500).json({error:e.message})}
 });
-app.post('/api/auth/logout',auth,csrf,async(r,s)=>{await db.logout(cookieToken(r));s.setHeader('Set-Cookie','dm_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax');s.json({success:true})});
+app.post('/api/auth/logout',auth,csrf,async(r,s)=>{await db.logout(r.authToken);s.json({success:true})});
 app.get('/api/auth/me',auth,async(r,s)=>{try{require('./index').startBusiness(r.businessId).catch(e=>console.error('WhatsApp lazy startup:',e.message))}catch(e){console.error('WhatsApp worker load:',e.message)}s.json({business:await db.business(r.businessId),user:{id:r.userId}})});
 app.use('/api',auth); app.use('/api',csrf);
 app.get('/api/dashboard',async(r,s)=>s.json(await db.dashboard(r.businessId)));
