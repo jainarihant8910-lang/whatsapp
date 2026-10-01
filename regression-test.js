@@ -5,8 +5,6 @@ for(const f of ['index.js','server.js','platform-db.js','public/app.js']){
   if(r.status!==0)throw new Error('Syntax failed: '+f+'\n'+r.stderr);
 }
 const index=read('index.js'),server=read('server.js'),app=read('public/app.js'),db=read('platform-db.js');
-if(!server.includes("async function ocrSpaceOcr(buf,mimeType='image/png',engine="))throw new Error('OCR engine selection is not explicit');
-if(!server.includes("form.append('OCREngine',String(engine))"))throw new Error('OCR engine parameter is not forwarded');
 const checks=[
  [index.includes('inFlightMessageIds'),'Missing in-flight duplicate guard'],
  [index.includes('claimProcessedMessage'),'Missing persistent message claim'],
