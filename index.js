@@ -146,32 +146,51 @@ function parse(body) {
 }
 
 async function phone(message, client, businessId) {
-  const from=String(message.from||'');
-  if(!from||from.endsWith('@g.us'))return null;
-  if(from.endsWith('@c.us'))return db.normalizePhone(from.replace('@c.us',''));
-  if(from.endsWith('@lid')){
-    const lid=from.replace('@lid','');
-    const old=await db.lid(businessId,lid);
-    if(old)return old;
-    try{
-      const result=await client.getContactLidAndPhone([from]);
-      const raw=result?.find?.(x=>String(x?.lid||'')===from)?.pn||result?.[0]?.pn||'';
-      const p=db.normalizePhone(String(raw).replace(/@c\.us$/i,''));
-      if(p){await db.saveLid(businessId,lid,p);return p}
-    }catch(e){console.error('LID -> phone lookup failed:',e.message)}
-    try{
-      const contact=await message.getContact();
-      const raw=contact?.number||contact?.id?.user||'';
-      const p=db.normalizePhone(String(raw).replace(/@c\.us$/i,''));
-      if(p){await db.saveLid(businessId,lid,p);return p}
-    }catch(e){console.error('Contact phone lookup failed:',e.message)}
-    try{
-      const contact=await client.getContactById(from);
-      const raw=contact?.number||contact?.id?.user||'';
-      const p=db.normalizePhone(String(raw).replace(/@c\.us$/i,''));
-      if(p){await db.saveLid(businessId,lid,p);return p}
-    }catch(e){console.error('Contact-by-LID lookup failed:',e.message)}
+  const from = String(message?.from || '');
+  const author = String(message?.author || '');
+  if (!from || from.endsWith('@g.us')) return null;
+
+  // Normal phone JID.
+  const direct = [from, author, message?.rawData?.key?.participant, message?.rawData?.key?.remoteJid]
+    .filter(Boolean).map(String).find(x => x.endsWith('@c.us'));
+  if (direct) return db.normalizePhone(direct.replace(/@c\.us$/i, ''));
+
+  // WhatsApp privacy LID. whatsapp-web.js exposes an official resolver for this.
+  const lidJid = [from, author, message?.rawData?.key?.participant, message?.rawData?.key?.remoteJid]
+    .filter(Boolean).map(String).find(x => x.endsWith('@lid'));
+  if (!lidJid) return null;
+
+  const lid = lidJid.replace(/@lid$/i, '');
+  const old = await db.lid(businessId, lid);
+  if (old) return old;
+
+  try {
+    const result = await client.getContactLidAndPhone([lidJid]);
+    const row = result?.find?.(x => String(x?.lid || '') === lidJid) || result?.[0];
+    const raw = String(row?.pn || '');
+    const p = db.normalizePhone(raw.replace(/@c\.us$/i, ''));
+    if (p) {
+      await db.saveLid(businessId, lid, p);
+      return p;
+    }
+  } catch (e) {
+    console.error('LID -> phone lookup failed:', e.message);
   }
+
+  try {
+    const contact = await message.getContact();
+    const raw = String(contact?.number || contact?.id?._serialized || contact?.id?.user || '');
+    if (!raw.endsWith('@lid')) {
+      const p = db.normalizePhone(raw.replace(/@c\.us$/i, ''));
+      if (p) {
+        await db.saveLid(businessId, lid, p);
+        return p;
+      }
+    }
+  } catch (e) {
+    console.error('Contact phone lookup failed:', e.message);
+  }
+
   return null;
 }
 
