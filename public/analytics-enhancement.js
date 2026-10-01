@@ -18,7 +18,7 @@
       const source=$('anSource')?.value||analyticsFilters.source;
       const q=new URLSearchParams({from,to,product_id:product,customer,source});
       const d=await api('/api/analytics/sales?'+q.toString());
-      const rows=[['Product','Units','Sales','Cost','Profit','Margin %']];
+      const rows=[['Product','Units','Sales','Purchase Value','Gross Profit','Margin %']];
       (d.products||[]).forEach(x=>rows.push([x.name,x.units,x.sales,x.cogs,x.profit,x.margin]));
       const escCsv=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
       const csv=rows.map(r=>r.map(escCsv).join(',')).join('\n');
@@ -58,7 +58,7 @@
       box.innerHTML='<div class="bar"><div><h3>Today’s sales & profit</h3><p class="muted">Delivered orders, after recorded returns.</p></div><button onclick="go(\'analytics\')">Open analysis →</button></div>'+
         '<div class="grid stats analytics-mini-stats">'+
         card('Sales','₹'+n(s.sales),'Net sales')+
-        card('Cost','₹'+n(s.cogs),'Cost of goods')+
+        card('Purchase value','₹'+n(s.purchase_value??s.cogs),'Cost of goods sold')+
         card('Profit','₹'+n(s.profit),n(s.margin)+'% margin')+
         card('Units',n(s.units),'Net units sold')+'</div>';
       $('page').appendChild(box);
