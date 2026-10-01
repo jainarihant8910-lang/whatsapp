@@ -14,7 +14,12 @@ const checks=[
  [server.includes("app.delete('/api/items/:id'"),'Zero-stock delete API is missing'],
  [db.includes('Number(item.current_stock)!==0'),'Delete zero-stock guard is missing'],
  [db.includes('LEFT JOIN items i ON i.business_id=s.business_id AND i.id=s.item_id'),'Deleted products are preserved in stock history'],
- [app.includes('Number(x.current_stock)===0'),'Delete button is not restricted to zero stock']
+ [app.includes('Number(x.current_stock)===0'),'Delete button is not restricted to zero stock'],
+ [db.includes('async function resolveOrderProduct'),'Smart product resolver is missing'],
+ [db.includes("match:'ambiguous'"),'Ambiguous product detection is missing'],
+ [db.includes('async function findOrderProduct'),'Exact/alias product fallback is missing'],
+ [index.includes('AMBIGUOUS_PRODUCT'),'WhatsApp ambiguous-product handling is missing'],
+ [index.includes('No order was created and no stock was changed'),'Ambiguous match safety message is missing']
 ];
 for(const [ok,msg] of checks)if(!ok)throw new Error(msg);
 console.log('Regression checks passed.');
