@@ -132,6 +132,9 @@ async function addAlias(b,itemId,alias){
 async function deleteAlias(b,id){return run('DELETE FROM product_aliases WHERE business_id=? AND id=?',[b,id])}
 async function createOrder(o){
   const inputItems=Array.isArray(o.items)?o.items:[];
+  if(!inputItems.length)throw Error('At least one order item is required');
+  const allowPartial=Boolean(o.allowPartialStock);
+  const source=String(o.sourceType||'WHATSAPP').toUpperCase()==='MANUAL'?'MANUAL':'WHATSAPP';
   const resolved=[];
   for(const x of inputItems){
     const q=Number(x.quantity),r=await resolveOrderProduct(o.businessId,x.item);
@@ -141,14 +144,12 @@ async function createOrder(o){
   const shortages=[];
   for(const row of resolved){
     const p=row.result.product,q=row.quantity;
-    if(p && q>0 && Number(p.current_stock)<q){
-      shortages.push({name:p.name,sku:p.sku||'',requested:q,available:Number(p.current_stock||0),unit:p.unit||'PCS'});
-    }
+    if(p && q>0 && Number(p.current_stock)<q)shortages.push({name:p.name,sku:p.sku||'',requested:q,available:Number(p.current_stock||0),unit:p.unit||'PCS'});
   }
-  if(shortages.length && String(o.sourceType||'WHATSAPP').toUpperCase()==='MANUAL'){
+  if(shortages.length && source==='MANUAL'){
     const e=Error('Insufficient stock for one or more products'); e.code='INSUFFICIENT_STOCK'; e.shortages=shortages; throw e;
   }
-  if(shortages.length){
+  if(shortages.length && !allowPartial){
     const e=Error('Insufficient stock requires sender confirmation');
     e.code='INSUFFICIENT_STOCK_CONFIRMATION'; e.shortages=shortages; throw e;
   }
@@ -157,17 +158,28 @@ async function createOrder(o){
     const dup=await get('SELECT id FROM orders WHERE business_id=? AND whatsapp_message_id=?',[o.businessId,o.whatsappMessageId]);
     if(dup){await run('ROLLBACK');return order(o.businessId,dup.id)}
     const totalRequested=inputItems.reduce((sum,x)=>sum+Math.max(0,Number(x.quantity)||0),0);
-    const r=await run('INSERT INTO orders(business_id,date,time,delivered_to,sender_id,whatsapp_message_id,whatsapp_from,total_items,source_type) VALUES(?,?,?,?,?,?,?,?,?)',[o.businessId,o.date,o.time,o.deliveredTo,o.senderId,o.whatsappMessageId,o.whatsappFrom,totalRequested,String(o.sourceType||'WHATSAPP').toUpperCase()==='MANUAL'?'MANUAL':'WHATSAPP']);
+    const r=await run('INSERT INTO orders(business_id,date,time,delivered_to,sender_id,whatsapp_message_id,whatsapp_from,total_items,source_type) VALUES(?,?,?,?,?,?,?,?,?)',[o.businessId,o.date,o.time,o.deliveredTo,o.senderId,o.whatsappMessageId,o.whatsappFrom,totalRequested,source]);
     let acceptedQty=0,rejectedQty=0;
     for(const row of resolved){
       const x=row.input,name=clean(x.item),q=row.quantity,p=row.result.product;
       if(!p){rejectedQty+=Math.max(0,q);await run('INSERT INTO order_items(business_id,order_id,item_name,requested_quantity,rejected_quantity,status,rejection_reason) VALUES(?,?,?,?,?,?,?)',[o.businessId,r.lastID,name,q,q,'REJECTED','Product not found in stock']);continue}
       if(!(q>0))continue;
-      const taxable=money(q*p.selling_price),tax=money(taxable*p.gst_rate/100);
-      const oi=await run('INSERT INTO order_items(business_id,order_id,item_id,item_name,requested_quantity,accepted_quantity,status,unit,rate,hsn_code,gst_rate,taxable_value,total_tax,line_total) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',[o.businessId,r.lastID,p.id,p.name,q,q,'ACCEPTED',p.unit,p.selling_price,p.hsn_code,p.gst_rate,taxable,tax,money(taxable+tax)]);
-      await run('UPDATE items SET current_stock=current_stock-? WHERE business_id=? AND id=?',[q,o.businessId,p.id]);
-      await run('INSERT INTO stock_transactions(business_id,item_id,type,quantity,reason,order_id,order_item_id) VALUES(?,?,"OUT",?,?,?,?)',[o.businessId,p.id,q,((String(o.sourceType||'WHATSAPP').toUpperCase()==='MANUAL'?'Manual order to ':'WhatsApp delivery to ')+o.deliveredTo),r.lastID,oi.lastID]);
-      acceptedQty+=q;
+      const fresh=await get('SELECT * FROM items WHERE business_id=? AND id=?',[o.businessId,p.id]);
+      const available=Math.max(0,Number(fresh?.current_stock||0));
+      const accepted=allowPartial?Math.min(q,available):q;
+      const rejected=Math.max(0,q-accepted);
+      if(rejected>0&&!allowPartial){
+        const e=Error('Insufficient stock for '+p.name);e.code='INSUFFICIENT_STOCK_CONFIRMATION';e.shortages=[{name:p.name,sku:p.sku||'',requested:q,available,unit:p.unit||'PCS'}];throw e;
+      }
+      const taxable=money(accepted*p.selling_price),tax=money(taxable*p.gst_rate/100);
+      const status=accepted>0&&rejected>0?'PARTIAL':accepted>0?'ACCEPTED':'REJECTED';
+      const reason=rejected>0?'Insufficient stock — only '+available+' '+(p.unit||'PCS')+' available':'';
+      const oi=await run('INSERT INTO order_items(business_id,order_id,item_id,item_name,requested_quantity,accepted_quantity,rejected_quantity,status,rejection_reason,unit,rate,hsn_code,gst_rate,taxable_value,total_tax,line_total) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',[o.businessId,r.lastID,p.id,p.name,q,accepted,rejected,status,reason,p.unit,p.selling_price,p.hsn_code,p.gst_rate,taxable,tax,money(taxable+tax)]);
+      if(accepted>0){
+        await run('UPDATE items SET current_stock=current_stock-? WHERE business_id=? AND id=?',[accepted,o.businessId,p.id]);
+        await run('INSERT INTO stock_transactions(business_id,item_id,type,quantity,reason,order_id,order_item_id) VALUES(?,?,"OUT",?,?,?,?)',[o.businessId,p.id,accepted,(source==='MANUAL'?'Manual order to ':'WhatsApp delivery to ')+o.deliveredTo,r.lastID,oi.lastID]);
+      }
+      acceptedQty+=accepted; rejectedQty+=rejected;
     }
     const status=acceptedQty>0&&rejectedQty>0?'PARTIAL':acceptedQty>0?'SUCCESS':'REJECTED';
     await run('UPDATE orders SET accepted_items=?,rejected_items=?,status=? WHERE id=?',[acceptedQty,rejectedQty,status,r.lastID]);
